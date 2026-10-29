@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>SketchCollab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Caveat:wght@400;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: header across the top; tools down the left; options bar over the canvas; Layers and "What you said" on the right. */
+:root {
+  --bg: #e9ecf2; --surface: #ffffff; --surface-2: #f3f5f9; --stage: #dde1e9;
+  --fg: #1a1e27; --muted: #5a6373; --line: #d3d8e1;
+  --accent: #2747c9; --accent-fg: #ffffff; --accent-soft: #e3e8fb;
+  --rec: #d92f2f; --glow: #ffc21a; --point: #d6336c;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111419; --surface: #1a1e26; --surface-2: #232833; --stage: #0c0e12;
+    --fg: #e7eaf0; --muted: #9aa3b3; --line: #2e3441;
+    --accent: #8199ff; --accent-fg: #0d1020; --accent-soft: #252c4a; --rec: #ff6363;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111419; --surface: #1a1e26; --surface-2: #232833; --stage: #0c0e12;
+  --fg: #e7eaf0; --muted: #9aa3b3; --line: #2e3441;
+  --accent: #8199ff; --accent-fg: #0d1020; --accent-soft: #252c4a; --rec: #ff6363;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font-body); display: flex; flex-direction: column; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* header */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { font: 800 19px/1 var(--font-display); letter-spacing: -0.01em; white-space: nowrap; }
+.brand span { color: var(--accent); }
+.rec { display: inline-flex; align-items: center; gap: 9px; border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 6px 13px 6px 9px; font-weight: 700; }
+.rec .dot { width: 13px; height: 13px; border-radius: 50%; background: var(--rec); flex: none; }
+.rec .clock { font: 500 13px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.rec.on { background: var(--rec); border-color: var(--rec); color: #fff; }
+.rec.on .dot { background: #fff; animation: pulse 1.2s ease-in-out infinite; }
+.rec.on .clock { color: #fff; }
+@keyframes pulse { 50% { transform: scale(.6); opacity: .6; } }
+#title { width: 200px; max-width: 40vw; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface-2); }
+.spacer { flex: 1; }
+.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 6px 11px; font-weight: 700; white-space: nowrap; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn:disabled { opacity: .55; cursor: default; }
+.armed { background: var(--rec) !important; border-color: var(--rec) !important; color: #fff !important; }
+
+/* main area */
+.work { flex: 1; min-height: 0; display: grid; grid-template-columns: 58px minmax(0, 1fr) 330px; }
+
+.tools { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0; overflow-y: auto; }
+.tool { width: 42px; height: 38px; border: 0; border-radius: 8px; background: transparent; display: grid; place-items: center; flex: none; }
+.tool:hover { background: var(--surface-2); }
+.tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.tool svg { width: 21px; height: 21px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tsep { width: 30px; height: 1px; background: var(--line); margin: 4px 0; flex: none; }
+.colors { position: relative; width: 46px; height: 46px; margin-top: 6px; flex: none; }
+.colors button { position: absolute; width: 28px; height: 28px; border-radius: 6px; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); padding: 0; }
+#primary { left: 2px; top: 2px; z-index: 1; }
+#secondary { right: 2px; bottom: 2px; }
+#swap { position: absolute; right: -2px; top: -4px; width: 18px; height: 18px; border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 0; box-shadow: none; }
+.colors input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.options { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px 14px; padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--line); height: 46px; flex: none; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.options > * { flex: none; }
+.opt { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.opt b { color: var(--fg); font-weight: 700; }
+.opt input[type=range] { width: 96px; accent-color: var(--accent); }
+.opt output { font: 500 12px var(--font-mono); color: var(--fg); min-width: 30px; font-variant-numeric: tabular-nums; }
+.opt select { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; background: var(--surface-2); }
+.opt input[type=checkbox] { accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface-2); padding: 4px 9px; font-size: 13px; font-weight: 700; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.sw { width: 20px; height: 20px; border-radius: 50%; border: 0; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .2); padding: 0; }
+.sws { display: inline-flex; gap: 4px; }
+.hintline { color: var(--muted); font-size: 13px; }
+
+.viewport { position: relative; flex: 1; min-height: 0; background: var(--stage); overflow: hidden; touch-action: none; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; color: #8a93a3; font-size: 15px; max-width: 420px; padding: 20px; }
+.hint b { display: block; font: 700 21px var(--font-display); color: #5a6373; margin-bottom: 6px; }
+.zoombar { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px; box-shadow: 0 4px 14px rgb(0 0 0 / .12); }
+.zoombar button { border: 0; background: transparent; border-radius: 6px; padding: 4px 8px; font-weight: 700; }
+.zoombar button:hover { background: var(--surface-2); }
+#zoomLabel { font: 500 12px var(--font-mono); min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+.playbar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 6px 8px 6px 14px; box-shadow: 0 6px 20px rgb(0 0 0 / .25); z-index: 4; }
+.playbar span { font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+.playbar progress { width: 140px; accent-color: var(--glow); }
+.playbar button { border: 0; border-radius: 999px; background: var(--bg); color: var(--fg); padding: 4px 12px; font-weight: 700; }
+#textEditor { position: absolute; z-index: 3; border: 1px dashed var(--accent); background: transparent; resize: none; outline: none; padding: 0; margin: 0; overflow: hidden; white-space: pre; line-height: 1.25; min-width: 40px; }
+.banner { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 5; width: min(520px, calc(100% - 32px)); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / .18); }
+.banner p { margin: 0; flex: 1 1 220px; }
+
+/* right side */
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--line); }
+.phead { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 12px 8px; }
+.phead h2 { margin: 0; font: 700 15px var(--font-display); }
+.icons { display: flex; gap: 2px; }
+.ib { border: 0; background: transparent; border-radius: 6px; width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); font-weight: 700; }
+.ib:hover { background: var(--surface-2); color: var(--fg); }
+.ib svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.layers { border-bottom: 1px solid var(--line); display: flex; flex-direction: column; max-height: 38%; min-height: 120px; }
+.llist { list-style: none; margin: 0; padding: 0 8px 8px; overflow-y: auto; }
+.lrow { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 8px; border: 1px solid transparent; }
+.lrow.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.lrow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; padding: 3px 2px; }
+.lrow .name input { width: 100%; border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; background: var(--surface); }
+.lrow .off { opacity: .35; }
+.lrow .opacity { grid-column: 2 / 4; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); padding: 0 2px 4px; }
+.lrow .opacity input { flex: 1; accent-color: var(--accent); }
+.said { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.pill.live { background: var(--rec); border-color: var(--rec); color: #fff; }
+.pill.warn { background: #ffe8a3; border-color: #e7c55a; color: #4a3800; }
+.timeline { list-style: none; margin: 0; padding: 0 8px 8px 12px; overflow-y: auto; flex: 1; min-height: 0; }
+.timeline li { display: grid; grid-template-columns: 30px 44px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+.timeline li.playing .txt { background: color-mix(in srgb, var(--glow) 35%, transparent); border-radius: 4px; }
+.play { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); display: grid; place-items: center; padding: 0; }
+.play:hover { border-color: var(--accent); color: var(--accent); }
+.play svg { width: 12px; height: 12px; fill: currentColor; }
+.timeline time { font: 500 12px var(--font-mono); color: var(--muted); padding-top: 5px; font-variant-numeric: tabular-nums; }
+.timeline .txt { margin: 0; padding-top: 3px; outline: none; border-radius: 4px; overflow-wrap: anywhere; }
+.timeline .txt:focus { background: var(--surface-2); box-shadow: 0 0 0 2px var(--accent); }
+.meta { display: flex; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+.chip { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.chip.ink { background: color-mix(in srgb, var(--glow) 30%, var(--surface)); border-color: color-mix(in srgb, var(--glow) 60%, var(--line)); color: var(--fg); }
+.del { border: 0; background: transparent; color: var(--muted); width: 26px; height: 26px; border-radius: 6px; font-size: 17px; line-height: 1; }
+.del:hover { background: var(--surface-2); color: var(--rec); }
+.empty { color: var(--muted); padding: 6px 8px 10px 0; display: block !important; }
+.empty b { color: var(--fg); }
+.interim { padding: 0 12px; color: var(--muted); font-style: italic; }
+.interim:not(:empty) { padding: 6px 12px; border-top: 1px solid var(--line); }
+.note { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.note input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface-2); }
+.savehint { padding: 0 12px 10px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* dialog */
+.scrim { position: fixed; inset: 0; background: rgb(0 0 0 / .4); display: grid; place-items: center; z-index: 30; padding: 16px; }
+.dlg { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; width: min(460px, 100%); display: grid; gap: 14px; box-shadow: 0 20px 50px rgb(0 0 0 / .3); max-height: calc(100vh - 32px); overflow-y: auto; }
+.dlg h3 { margin: 0; font: 700 18px var(--font-display); }
+.dlg fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dlg legend { font-weight: 700; margin-bottom: 6px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 5px 9px; font-size: 13px; }
+.presets button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.whrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.whrow input[type=number] { width: 90px; border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; background: var(--surface-2); }
+.dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) translateY(20px); max-width: min(640px, calc(100% - 32px)); background: var(--fg); color: var(--bg); padding: 11px 15px; border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 40; overflow-wrap: anywhere; }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+
+@media (max-width: 900px) {
+  body { overflow: auto; height: auto; min-height: 100%; }
+  .work { display: flex; flex-direction: column; }
+  .tools { flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); padding: 4px 8px; }
+  .tsep { width: 1px; height: 26px; margin: 0 4px; }
+  .colors { margin: 0 0 0 6px; }
+  .viewport { flex: none; height: 62vh; }
+  .side { border-left: 0; border-top: 1px solid var(--line); }
+  .layers { max-height: none; }
+  .timeline { max-height: 50vh; }
+  .spacer { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .rec.on .dot { animation: none; } .toast { transition: none; } }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">Sketch<span>Collab</span></div>
+  <button id="rec" class="rec" type="button" title="Start or stop listening (R)"><span class="dot"></span><span id="recLabel">Start talking</span><span id="clock" class="clock">00:00</span></button>
+  <input id="title" placeholder="Name this sketch (optional)" maxlength="40" autocomplete="off">
+  <div class="spacer"></div>
+  <button class="btn" id="copyPic" title="Copy a picture of the whole session to paste into any chat">Copy picture</button>
+  <button class="btn" id="copyWords" title="Copy what you said and drew, as text">Copy words</button>
+  <button class="btn" id="save" title="Save the session into the sessions folder">Save</button>
+  <button class="btn primary" id="send" title="Save and hand it straight to Claude">Send to Claude</button>
+  <button class="btn" id="new" title="Start a new, empty session">New</button>
+  <button class="btn" id="theme" title="Switch between automatic, light and dark">Auto</button>
+</header>
+
+<div class="work">
+  <nav class="tools" id="tools" aria-label="Tools"></nav>
+
+  <section class="center">
+    <div class="options" id="options"></div>
+    <div class="viewport" id="viewport">
+      <canvas id="view"></canvas>
+      <textarea id="textEditor" spellcheck="true" hidden></textarea>
+      <div class="hint" id="hint"><b>Draw here and talk</b>Press Start talking and explain as you go. Rest the mouse on something to point at it. Paste or drop pictures to bring them in.</div>
+      <div class="playbar" id="playbar" hidden><span id="playTime">00:00</span><progress id="playProg" max="1" value="0"></progress><button id="playStop">Stop</button></div>
+      <div class="zoombar">
+        <button id="pageBtn" title="Drawing size and paper">1920 × 1080</button>
+        <button id="zoomOut" title="Zoom out (Ctrl -)">−</button>
+        <span id="zoomLabel">100%</span>
+        <button id="zoomIn" title="Zoom in (Ctrl +)">+</button>
+        <button id="zoomFit" title="Fit the drawing in the window (Ctrl 0)">Fit</button>
+      </div>
+      <div class="banner" id="restore" hidden>
+        <p id="restoreText">You have an unsaved sketch from last time.</p>
+        <button class="btn primary" id="restoreYes">Pick it up</button>
+        <button class="btn" id="restoreNo">Start fresh</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="layers">
+      <div class="phead"><h2>Layers</h2>
+        <div class="icons">
+          <button class="ib" id="layerAdd" title="New layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="ib" id="layerUp" title="Move layer up"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          <button class="ib" id="layerDown" title="Move layer down"><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
+          <button class="ib" id="layerDel" title="Delete layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+        </div>
+      </div>
+      <ol class="llist" id="layerList"></ol>
+    </section>
+    <section class="said">
+      <div class="phead"><h2>What you said</h2>
+        <div class="icons"><span id="mic" class="pill">Mic off</span><button class="ib" id="playAll" title="Play back the whole session"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg></button></div>
+      </div>
+      <ol id="timeline" class="timeline"></ol>
+      <div id="interim" class="interim" aria-live="polite"></div>
+      <form id="noteForm" class="note"><input id="note" placeholder="Type a note, or press Win+H to dictate" autocomplete="off"><button class="btn" type="submit">Add</button></form>
+      <div class="savehint" id="saveHint"></div>
+    </section>
+  </aside>
+</div>
+
+<div class="scrim" id="pageDlg" hidden>
+  <form class="dlg" id="pageForm">
+    <h3>Drawing size and paper</h3>
+    <fieldset><legend>Size</legend>
+      <div class="presets" id="sizePresets"></div>
+      <div class="whrow"><label>Width <input type="number" id="pageW" min="100" max="4096" step="1"></label><label>Height <input type="number" id="pageH" min="100" max="4096" step="1"></label><span class="hintline">pixels, up to 4096</span></div>
+      <label class="opt"><input type="checkbox" id="pageCenter" checked> Keep the drawing centred when the size changes</label>
+    </fieldset>
+    <fieldset><legend>Paper</legend>
+      <div class="seg" id="paperSeg"><button type="button" data-paper="white">White</button><button type="button" data-paper="grey">Light grey</button><button type="button" data-paper="dark">Dark</button></div>
+      <label class="opt"><input type="checkbox" id="pageGrid"> Show dot grid (not saved in pictures)</label>
+    </fieldset>
+    <div class="actions"><button type="button" class="btn" id="pageCancel">Cancel</button><button type="submit" class="btn primary">Apply</button></div>
+  </form>
+</div>
+
+<input type="file" id="importInput" accept="image/*,.svg,.heic,.heif,.avif,.bmp,.ico" multiple hidden>
+<div id="toast" class="toast" role="status"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

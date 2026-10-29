@@ -1,0 +1,5 @@
+# Saved sessions hold your drawings, pictures and voice recordings: they stay on this computer.
+sessions/
+
+__pycache__/
+*.pyc
