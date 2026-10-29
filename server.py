@@ -47,7 +47,9 @@ MAX_BODY = 600 * 1024 * 1024           # a long saved session with photos and vo
 MAX_WS_MESSAGE = 12 * 1024 * 1024      # one message from a guest (a pasted photo fits)
 MAX_MEMBERS = 10
 MAX_EVENTS, MAX_SPEECH, MAX_LAYERS = 20000, 5000, 100
-MEMBER_ASSET_BYTES, MEMBER_AUDIO_BYTES, AUDIO_UPLOAD = 80 * 2**20, 200 * 2**20, 25 * 2**20
+MEMBER_ASSET_BYTES, MEMBER_AUDIO_BYTES, AUDIO_UPLOAD = 40 * 2**20, 60 * 2**20, 25 * 2**20
+MEMBER_EVENT_BYTES = 30 * 2**20        # one guest's drawing and words, all together
+ROOM_GUEST_BYTES = 400 * 2**20         # everything all guests together may leave in this computer's memory
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 FILE_RE = re.compile(r"^((moments|layers|assets|audio)/)?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_]{1,60}$")
@@ -58,7 +60,7 @@ EVENT_TYPES = {"add", "addMany", "batch", "erase", "tf", "delete", "cut", "text"
 COLORS = ["#2563d6", "#d43d33", "#23935a", "#e5892a", "#7b4bc4", "#e56aa6", "#0f8f8f", "#a35a1f", "#5a6373", "#c9a400"]
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 APP_FILES = {"/": "index.html", "/index.html": "index.html"}
-TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
+TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2"}
 
 
 # ---------------------------------------------------------------- the secure link
@@ -204,6 +206,27 @@ def event_ok(ev, depth=0):
     return True
 
 
+def clean_props(props):
+    """Brush settings sent with a live line: only short, plain values, so nobody can send something huge or odd to everyone."""
+    out = {}
+    for k, v in list(props.items())[:40]:
+        if not isinstance(k, str) or len(k) > 30:
+            continue
+        if isinstance(v, bool):
+            out[k] = v
+        elif isinstance(v, (int, float)) and v == v:
+            out[k] = max(-10000, min(10000, v))
+        elif isinstance(v, str) and len(v) <= 40:
+            out[k] = v
+        elif v is None:
+            out[k] = None
+    return out
+
+
+def clean_points(pts):
+    return [q[:6] for q in pts[:2000] if isinstance(q, list) and 3 <= len(q) and all(isinstance(v, (int, float)) for v in q[:6])]
+
+
 # ---------------------------------------------------------------- the team room
 class Room:
     """One team session: who's in it and everything drawn and said, in the order the server received it."""
@@ -225,6 +248,7 @@ class Room:
         for e in self.events:
             self.ids.update(new_ids(e))
         self.fails, self.join_attempts = 0, {}
+        self.guest_bytes = 0
 
     @staticmethod
     def new_code():
@@ -243,7 +267,7 @@ class Room:
             used = {m["color"] for m in self.members.values()}
             color = next((c for c in COLORS if c not in used), COLORS[len(self.members) % len(COLORS)])
             m = {"id": mid, "name": name, "color": color, "token": secrets.token_urlsafe(24), "online": False, "host": host,
-                 "asset_bytes": 0, "audio_bytes": 0, "rate": [time.time(), 0, 0]}
+                 "asset_bytes": 0, "audio_bytes": 0, "event_bytes": 0, "rate": [time.time(), 0, 0]}
             self.members[mid] = m
             return m
 
@@ -276,6 +300,17 @@ class Room:
         r[i] += 1
         return r[i] <= (60 if kind == "change" else 80)
 
+    def take_bytes(self, member, kind, n, limit):
+        """Counts what a guest leaves in memory here, against their own limit and one for all guests together.
+        The host's own work isn't limited. Call with the lock held."""
+        if member["host"]:
+            return True
+        if member[kind] + n > limit or self.guest_bytes + n > ROOM_GUEST_BYTES:
+            return False
+        member[kind] += n
+        self.guest_bytes += n
+        return True
+
     def id_ok(self, member, ident):
         """New ids must carry the sender's own tag and must not exist yet, so nobody can overwrite someone else's work."""
         return (isinstance(ident, str) and ID_RE.match(ident) and re.match(rf"^[a-z]{member['id']}[a-z0-9]*_\d+$", ident)
@@ -294,9 +329,9 @@ class Room:
                 out.update(x=x if isinstance(x, (int, float)) else None, y=y if isinstance(y, (int, float)) else None)
             elif t == "live":
                 pts = msg.get("pts") if isinstance(msg.get("pts"), list) else []
-                out.update(pts=pts[:2000], reset=bool(msg.get("reset")))
+                out.update(pts=clean_points(pts), reset=bool(msg.get("reset")))
                 if isinstance(msg.get("props"), dict):
-                    out["props"] = msg["props"]
+                    out["props"] = clean_props(msg["props"])
             return self.broadcast(out, skip=mid)
         if not self.allowed(member, "change"):
             return
@@ -305,8 +340,9 @@ class Room:
             if not event_ok(ev) or not self.id_ok(member, ev.get("id")) or not all(self.id_ok(member, i) for i in new_ids(ev)):
                 return
             assets = msg.get("assets") if isinstance(msg.get("assets"), dict) else {}
+            size = len(json.dumps(ev))
             with self.lock:
-                if len(self.events) >= MAX_EVENTS:
+                if len(self.events) >= MAX_EVENTS or not self.take_bytes(member, "event_bytes", size, MEMBER_EVENT_BYTES):
                     return
                 if ev.get("type") == "layer" and ev.get("op") == "add" and sum(1 for e in self.events if e.get("type") == "layer" and e.get("op") == "add") >= MAX_LAYERS:
                     return
@@ -314,9 +350,8 @@ class Room:
                 for aid, url in assets.items():
                     if aid in self.assets or not ID_RE.match(str(aid)) or not isinstance(url, str) or not ASSET_RE.match(url):
                         continue   # never overwrite someone else's picture; only real images
-                    if member["asset_bytes"] + len(url) > MEMBER_ASSET_BYTES:
+                    if not self.take_bytes(member, "asset_bytes", len(url), MEMBER_ASSET_BYTES):
                         continue
-                    member["asset_bytes"] += len(url)
                     clean[aid] = url
                 ev["who"], ev["by"] = mid, name
                 self.assets.update(clean)
@@ -341,7 +376,7 @@ class Room:
                    "t1": seg.get("t1") if isinstance(seg.get("t1"), (int, float)) else 0, "text": seg["text"][:2000],
                    "src": "typed" if seg.get("src") == "typed" else "said", "who": mid, "by": name, "color": member["color"]}
             with self.lock:
-                if len(self.speech) >= MAX_SPEECH:
+                if len(self.speech) >= MAX_SPEECH or not self.take_bytes(member, "event_bytes", len(seg["text"]) + 200, MEMBER_EVENT_BYTES):
                     return
                 self.speech.append(seg)
                 self.ids.add(seg["id"])
@@ -532,7 +567,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, data, mime, [("Content-Disposition", "attachment"), ("Content-Security-Policy", "sandbox")])
         # Only the app itself is served: its page and its scripts, read straight from known places.
         name = APP_FILES.get(path)
-        if not name and re.fullmatch(r"/js/[a-z0-9_-]+\.js", path):
+        if not name and (re.fullmatch(r"/js/[a-z0-9_-]+\.js", path) or re.fullmatch(r"/fonts/[a-z0-9_-]+\.woff2", path)):
             name = path[1:]
         target = ROOT / name if name else None
         if not target or not target.is_file():
@@ -613,6 +648,8 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.headers.get("Cf-Connecting-Ip") or self.client_address[0]
         now = time.time()
         with room.lock:
+            if len(room.join_attempts) > 1000:   # forget old tries, so the list can't grow without end
+                room.join_attempts = {k: v for k, v in room.join_attempts.items() if v and now - v[-1] < 60}
             tries = [t for t in room.join_attempts.get(ip, []) if now - t < 60]
             if len(tries) >= 10:
                 return self._reply(429, {"error": "Too many tries. Wait a minute, then check the join code."})
@@ -645,9 +682,10 @@ class Handler(BaseHTTPRequestHandler):
         with room.lock:
             mine = (not member["host"] and re.match(rf"^a{member['id']}[a-z0-9]*_\d+$", aid)) or member["host"]
             existing = next((a for a in room.audio if a.get("id") == aid), None)
-            if not mine or (existing and existing.get("who", "h") != member["id"]) or member["audio_bytes"] + len(raw) > MEMBER_AUDIO_BYTES:
+            if not mine or (existing and existing.get("who", "h") != member["id"]):
                 return self._reply(403, {"error": "not allowed"})
-            member["audio_bytes"] += len(raw)
+            if not room.take_bytes(member, "audio_bytes", len(raw), MEMBER_AUDIO_BYTES):
+                return self._reply(413, {"error": "That's all the voice recording this session can keep for you."})
             room.audio_data[aid] = (mime, raw)
             meta = {"id": aid, "t0": data.get("t0") if isinstance(data.get("t0"), (int, float)) else 0,
                     "dur": data.get("dur") if isinstance(data.get("dur"), (int, float)) else 0, "type": mime, "who": member["id"], "by": member["name"]}

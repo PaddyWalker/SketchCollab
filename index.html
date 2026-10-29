@@ -5,9 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>SketchCollab</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Caveat:wght@400;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>/* The fonts are kept in the app's own fonts/ folder, so nothing is loaded from Google. All are under the SIL Open Font License. */
+@font-face { font-family: 'Atkinson Hyperlegible'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/atkinson-400.woff2) format('woff2'); }
+@font-face { font-family: 'Atkinson Hyperlegible'; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/atkinson-700.woff2) format('woff2'); }
+@font-face { font-family: 'Atkinson Hyperlegible'; font-style: italic; font-weight: 400; font-display: swap; src: url(fonts/atkinson-400-italic.woff2) format('woff2'); }
+@font-face { font-family: 'Atkinson Hyperlegible'; font-style: italic; font-weight: 700; font-display: swap; src: url(fonts/atkinson-700-italic.woff2) format('woff2'); }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 600 800; font-display: swap; src: url(fonts/bricolage.woff2) format('woff2'); }
+@font-face { font-family: 'Caveat'; font-style: normal; font-weight: 400 700; font-display: swap; src: url(fonts/caveat.woff2) format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url(fonts/plexmono-500.woff2) format('woff2'); }
+</style>
 <style>
 /* Layout: header across the top; tools down the left; options bar over the canvas; Layers and "What you said" on the right. */
 :root {
@@ -135,6 +141,13 @@ button { cursor: pointer; }
 .said { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
 .pill.live { background: var(--rec); border-color: var(--rec); color: #fff; }
+.dlg .note { font-size: 13px; line-height: 1.45; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.dlg .note:empty { display: none; }
+.dlg .opt { white-space: normal; align-items: flex-start; line-height: 1.4; }
+.dlg .opt input[type=checkbox] { margin-top: 3px; flex: none; }
+.dlg .note { display: block; }
+.dlg .note > b { display: block; }
+.dlg .note ul { margin: 4px 0 0; padding-left: 18px; }
 .pill:empty { display: none; }
 .pill.warn { background: #ffe8a3; border-color: #e7c55a; color: #4a3800; }
 .timeline { list-style: none; margin: 0; padding: 0 8px 8px 12px; overflow-y: auto; flex: 1; min-height: 0; }
@@ -174,6 +187,7 @@ button { cursor: pointer; }
 .tstat.s-approved { background: color-mix(in srgb, #2e9e5b 30%, var(--surface)); }
 .tx { border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 2px 7px; margin-right: 4px; font-size: 15px; line-height: 1; white-space: nowrap; }
 .tx:hover { background: var(--bg); color: var(--rec); }
+.ib.armed { color: var(--rec); outline: 2px solid var(--rec); }
 .tx.armed { font-size: 12px; font-weight: 700; padding: 3px 7px; }
 .tadd { border: 0; background: transparent; color: var(--muted); font-weight: 700; padding: 6px 10px; border-radius: 8px 8px 0 0; white-space: nowrap; flex: none; }
 .tadd:hover { color: var(--accent); background: var(--surface-2); }
@@ -324,7 +338,7 @@ button { cursor: pointer; }
     </section>
     <section class="said">
       <div class="phead"><h2>What you said</h2>
-        <div class="icons"><span id="mic" class="pill">Mic off</span><button class="ib toggle" id="keepPlaying" type="button" aria-pressed="false" aria-label="Keep playing"><svg viewBox="0 0 24 24"><path d="M4 6l7 6-7 6zM13 6l7 6-7 6z" fill="currentColor" stroke="none"/></svg></button><button class="ib" id="playAll" title="Play back the whole session"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg></button></div>
+        <div class="icons"><span id="mic" class="pill">Mic off</span><button class="ib toggle" id="keepPlaying" type="button" aria-pressed="false" aria-label="Keep playing"><svg viewBox="0 0 24 24"><path d="M4 6l7 6-7 6zM13 6l7 6-7 6z" fill="currentColor" stroke="none"/></svg></button><button class="ib" id="delVoice" type="button" title="Delete the voice recordings in this tab (the words stay)" aria-label="Delete voice recordings" hidden><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button><button class="ib" id="playAll" title="Play back the whole session"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg></button></div>
       </div>
       <ol id="timeline" class="timeline"></ol>
       <div id="interim" class="interim" aria-live="polite"></div>
@@ -356,6 +370,8 @@ button { cursor: pointer; }
     <div id="teamStart">
       <p class="muted">Up to 10 people can sketch and talk in this session with you, from anywhere. SketchCollab makes a secure link from this computer, and the link and join code only work while your app is open.</p>
       <label class="field">Your name <input id="hostName" maxlength="30" autocomplete="off"></label>
+      <p class="note" id="teamShare"></p>
+      <label class="opt" id="shareVoiceRow" hidden><input type="checkbox" id="shareVoice"> <span id="shareVoiceText">Also share my earlier voice recordings from this tab</span></label>
       <p class="err" id="teamErr" hidden></p>
       <div class="actions"><button type="button" class="btn" id="teamCancel">Cancel</button><button type="button" class="btn primary" id="teamGo">Start team session</button></div>
     </div>
@@ -373,8 +389,15 @@ button { cursor: pointer; }
   <form class="dlg" id="joinForm" aria-labelledby="joinTitle">
     <h3 id="joinTitle">Join a SketchCollab session</h3>
     <p class="muted">Sketch and talk an idea out together. Use Chrome or Edge, and allow the microphone when asked.</p>
+    <div class="note"><b>Before you join:</b>
+      <ul>
+        <li>When you press Start talking, your voice is recorded and saved on the host's computer, along with what you draw and type.</li>
+        <li>Chrome sends your voice to Google (Edge to Microsoft) to turn it into text.</li>
+        <li>The host can send the session's words and pictures to Claude, an AI assistant made by Anthropic. Your voice recordings aren't sent.</li>
+      </ul></div>
     <label class="field">Your name <input id="joinName" maxlength="30" autocomplete="name" required></label>
     <label class="field">Join code <input id="joinCode" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
+    <label class="opt"><input type="checkbox" id="joinAgree" required> I understand, and I'm happy to join</label>
     <p class="err" id="joinErr" hidden></p>
     <div class="actions"><button type="submit" class="btn primary" id="joinGo">Join</button></div>
   </form>

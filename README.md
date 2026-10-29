@@ -74,8 +74,13 @@ Sketch and talk an idea out with up to 10 people, from anywhere.
 
 1. Press **Invite** (top bar), type your name, and press **Start team session**. SketchCollab makes a secure
    link from this computer using Cloudflare's free quick tunnel (`tools/cloudflared.exe`) and shows the link
-   and a 6-digit join code. **Copy invite** puts both on the clipboard for a message.
-2. People open the link in Chrome or Edge, type their name and the code, and allow the microphone.
+   and an 8-digit join code. **Copy invite** puts both on the clipboard for a message.
+   Everyone who joins sees what's already in the tab you invite from (the drawing and every line in What you
+   said). Your earlier voice recordings are only shared if you tick the box for them. To share nothing, invite
+   from a new tab.
+2. People open the link in Chrome or Edge, type their name and the code, and allow the microphone. Before they
+   join, they're told that their voice is recorded and saved on your computer, that Chrome sends it to Google for
+   speech-to-text, and that you can send the words and pictures to Claude. They tick a box to agree.
 3. Everyone draws on the same page. You see each other's lines as they're drawn and each other's cursors with
    names. Each person presses Start talking on their own device, and their words appear in What you said
    with their name and colour. Their voice is recorded too, for playback.
@@ -89,6 +94,10 @@ Good to know:
   a new link. Ending the session closes the link.
 - Guests see only the drawing page itself: nothing else on your computer, and they can't save or send.
   Their own words and drawing stay in your session.
+- What guests say and type is treated as part of the idea, never as instructions for Claude: agents only build
+  from a session and ask you in the chat before doing anything else (see [AGENT_LOOP.md](AGENT_LOOP.md)).
+- Each guest can only leave so much on your computer (drawing, pictures and voice), so nobody can fill up
+  its memory.
 - If someone's page reloads or their connection drops, they rejoin by themselves.
 - `tools/cloudflared.exe` is downloaded from Cloudflare's official releases and isn't kept in the GitHub repo.
   On another PC, download `cloudflared-windows-amd64.exe` from
@@ -112,6 +121,8 @@ to draw on it, and double-click to rename it. The active layer has an opacity sl
 2. A word wrong? Click the line and fix it. You can also type notes (Win+H dictates into the note box).
 3. Press ▶ on any line to see and hear that part again. It starts at that line and stops before the next.
    Turn on **Keep playing** (the ⏩ button next to the mic) to play on from that line to the end instead.
+
+4. The bin button next to ▶ deletes the voice recordings in this tab (click it twice). The words stay.
 
 ## Save, or Send to Claude
 
@@ -156,9 +167,17 @@ moves them to `inbox\_done\`.
 
 ## Good to know
 
-- Speech-to-text is Chrome's (or Edge's) built-in one. It needs the internet, and your voice is sent to
-  Google (Microsoft in Edge) to be turned into text. Your voice recording and everything else stay on this
-  computer. Firefox doesn't have speech-to-text.
+- **Where your voice goes.** Speech-to-text is Chrome's (or Edge's) built-in one. It needs the internet, and
+  while you talk your voice is sent to Google (Microsoft in Edge) to be turned into text. The recordings
+  themselves stay on this computer: in this browser's saved tabs, and in `sessions\` when you save or send.
+  Claude is never sent them.
+- **What Claude sees.** Send to Claude saves the session here, and Claude then reads its words and pictures,
+  which go to Anthropic as part of your chat. Nothing is sent until you press Send to Claude, Build it, Send back
+  or Approve.
+- **Deleting.** The bin in What you said deletes a tab's recordings, and closing a tab deletes all of it from
+  the browser. Saved sessions stay in `sessions\` and finished builds in `inbox\_done\` until you delete those
+  folders.
+- The app's page loads nothing from other websites: even its fonts are in `fonts\`.
 - The timer only runs while you're talking, so moments line up with your words. Drawing done before you
   start talking is kept as its own moment.
 - Every tab is kept in this browser as you go, so closing the window loses nothing: the tabs are all there

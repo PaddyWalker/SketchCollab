@@ -1258,6 +1258,7 @@ const PLAY = '<svg viewBox="0 0 12 12"><path d="M3 1.5l7.5 4.5L3 10.5z"/></svg>'
 let tlTimer = null;
 function renderTimelineSoon() { clearTimeout(tlTimer); tlTimer = setTimeout(renderTimeline, 120); }
 function renderTimeline() {
+  renderDelVoice();
   if (document.activeElement?.closest?.(".txt")) return;   // don't redraw a line someone is editing
   const ol = $("timeline"); ol.textContent = "";
   if (!doc.speech.length) {
@@ -1328,6 +1329,20 @@ function playSeg(seg) {
   if (next) to = Math.min(to, Math.max(from + 1500, next.t0 - 150));
   playRange(from, to);
 }
+// Deletes this tab's voice recordings, after a second click. The words in What you said stay.
+let delVoiceArmed = 0;
+function renderDelVoice() { const b = $("delVoice"); b.hidden = isGuestPage || !!team || !doc.audio.length; b.classList.remove("armed"); }
+$("delVoice").onclick = () => {
+  if (team || !doc.audio.length) return;
+  if (performance.now() - delVoiceArmed > 3000) {
+    delVoiceArmed = performance.now(); $("delVoice").classList.add("armed");
+    toast(`Click the bin again to delete ${doc.audio.length} voice recording${doc.audio.length === 1 ? "" : "s"} from this tab. The words stay.`, 3000);
+    return;
+  }
+  stopPlayback(); doc.audio = []; audioBlobs = new Map(); delVoiceArmed = 0;
+  changed(); saveDraft(); renderDelVoice();
+  toast("Voice recordings deleted from this tab. Copies in sessions you already saved or sent stay in the sessions folder.", 6000);
+};
 $("playAll").onclick = () => {
   const end = sessionEnd();
   if (end <= 0) return toast("Nothing to play yet. Press Start talking, then draw.");
@@ -2023,7 +2038,9 @@ function loadTeamState(st, serverNow) {
   for (const id of [...team.pending.keys()]) if (have.has(id)) team.pending.delete(id);
   const lost = [...team.pending.values()];
   doc.events = [...st.events, ...lost];
-  doc.speech = st.speech; doc.audio = st.audio;
+  // The host's earlier recordings that weren't shared stay in the host's own copy only.
+  const own = team.host ? doc.audio.filter(a => a.private && !st.audio.some(b => b.id === a.id)) : [];
+  doc.speech = st.speech; doc.audio = [...own, ...st.audio];
   for (const [id, url] of Object.entries(st.assets)) { if (safeAsset(url)) doc.assets[id] = url; team.shared.add(id); }
   const b = st.base || {}, first = !team.loaded;
   if (!team.host) { if (b.size0) doc.size0 = b.size0; for (const k of ["paper", "grid", "title", "created"]) if (k in b) doc[k] = b[k]; $("title").value = doc.title || ""; }
@@ -2031,7 +2048,7 @@ function loadTeamState(st, serverNow) {
   rebuild(); if (first && !team.host) fit();
   renderTimeline(); renderPeople(); renderTeamDlg();
   preloadAssets(doc).then(redrawAll);
-  doc.audio.forEach(a => fetchAudio(a.id));
+  st.audio.forEach(a => fetchAudio(a.id));
   $("hint").hidden = hasContent();
   return lost;
 }
@@ -2157,9 +2174,18 @@ $("endedOk").onclick = () => { $("endedDlg").hidden = true; };
 $("invite").onclick = () => {
   if (isGuestPage) { if (team) { team.link.close(); endTeamLocal(null); toast("You left the session."); } return; }
   $("teamDlg").hidden = false; $("teamErr").hidden = true;
-  if (!team) { $("hostName").value = settings.myName || ""; setTimeout(() => $("hostName").focus(), 0); }
+  if (!team) { $("hostName").value = settings.myName || ""; setTimeout(() => $("hostName").focus(), 0); renderShareNote(); }
   renderTeamDlg();
 };
+// Say plainly what guests will get from this tab. Earlier voice recordings are only shared if the host ticks the box.
+function renderShareNote() {
+  const voice = doc.audio.filter(a => audioBlobs.has(a.id)).length;
+  $("teamShare").textContent = hasContent() || doc.speech.length
+    ? "Everyone who joins sees everything already in this tab: the drawing, pictures and every line in What you said. To share none of it, start the session from a new tab (+ New)."
+    : "";
+  $("shareVoiceRow").hidden = !voice; $("shareVoice").checked = false;
+  $("shareVoiceText").textContent = `Also share my ${voice} earlier voice recording${voice === 1 ? "" : "s"} from this tab, so guests can play them back`;
+}
 $("teamCancel").onclick = $("teamClose").onclick = () => { $("teamDlg").hidden = true; };
 $("teamDlg").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") $("teamDlg").hidden = true; });
 $("teamGo").onclick = async () => {
@@ -2172,12 +2198,15 @@ $("teamGo").onclick = async () => {
     doc.idPrefix = `h${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}_`;
     for (const e of doc.events) { e.id ||= newId(doc, "e"); e.who ||= "h"; e.by ||= name; }
     for (const s of doc.speech) { s.id ||= newId(doc, "s"); }
-    const body = { name, base: { size0: doc.size0, paper: doc.paper, grid: doc.grid, title: doc.title, created: doc.created }, events: doc.events, speech: doc.speech, assets: doc.assets, audio: doc.audio, clock: speech.now() };
+    const shareVoice = $("shareVoice").checked;
+    for (const a of doc.audio) if (!shareVoice) a.private = true; else delete a.private;
+    const shared = doc.audio.filter(a => !a.private);
+    const body = { name, base: { size0: doc.size0, paper: doc.paper, grid: doc.grid, title: doc.title, created: doc.created }, events: doc.events, speech: doc.speech, assets: doc.assets, audio: shared, clock: speech.now() };
     const r = await fetch("/api/team/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const res = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(res.error || "the server refused");
     beginTeam({ id: res.id, name, color: res.color, token: res.token, host: true, startEpoch: res.startEpoch, serverNow: res.serverNow, url: res.url, code: res.code });
-    for (const a of doc.audio) { const b = audioBlobs.get(a.id); if (b) uploadAudio(a, b); }   // so guests can play back earlier talking too
+    for (const a of shared) { const b = audioBlobs.get(a.id); if (b) uploadAudio(a, b); }   // so guests can play back earlier talking too, if the host chose to
     renderTeamDlg();
   } catch (e) {
     $("teamErr").textContent = `Couldn't start the team session: ${e.message}`; $("teamErr").hidden = false;
