@@ -53,6 +53,10 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?")[0] == "/api/ping":
             return self._reply(200, {"ok": True, "folder": str(SESSIONS)})
+        if self.path.split("?")[0] == "/api/version":
+            # Changes whenever the app's own files change, so an open window can reload itself.
+            files = [ROOT / "index.html", *ROOT.glob("js/*.js")]
+            return self._reply(200, {"version": max((f.stat().st_mtime_ns for f in files if f.exists()), default=0)})
         # Never serve saved sessions or the server's own files over HTTP.
         path = unquote(self.path.split("?")[0].split("#")[0]).replace("\\", "/").lower()
         if path.startswith("/sessions") or path.endswith((".py", ".ps1", ".bat")):

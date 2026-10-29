@@ -1324,9 +1324,16 @@ async function saveDraft() {
   try { await idbDo("readwrite", st => st.put({ doc, clock: speech.now(), audio: [...audioBlobs], activeLayer }, "draft")); } catch (_) {}
 }
 async function offerRestore() {
-  let d = null;
+  let d = null, updated = false;
+  try { updated = sessionStorage.getItem(RELOAD_KEY) === "1"; sessionStorage.removeItem(RELOAD_KEY); } catch (_) {}
   try { d = await idbDo("readonly", st => st.get("draft")); } catch (_) {}
-  if (!d || !d.doc || !(d.doc.events.length || d.doc.speech.length)) return;
+  const has = d && d.doc && (d.doc.events.length || d.doc.speech.length);
+  if (updated) {   // reloaded for a new version: put the sketch straight back, no question
+    if (has) await loadDraft(d);
+    toast(has ? "Updated to the latest version. Your sketch is just as you left it." : "Updated to the latest version.", 4000);
+    return;
+  }
+  if (!has) return;
   const when = new Date(d.doc.created).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
   $("restoreText").textContent = `You have a sketch from ${when}${d.doc.title ? ` (“${d.doc.title}”)` : ""} that you can pick up again. Picking it up replaces anything drawn since this page opened.`;
   $("restore").hidden = false; restorePending = true;
@@ -1357,7 +1364,30 @@ armed($("new"), "Sure? Tap again", async () => {
   $("title").value = ""; $("clock").textContent = "00:00"; $("hint").hidden = false; dirty = false;
   toast("New session started.");
 });
-window.addEventListener("beforeunload", e => { if (dirty && hasContent()) { saveDraft(); e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", e => { if (reloading) return; if (dirty && hasContent()) { saveDraft(); e.preventDefault(); e.returnValue = ""; } });
+
+// When Claude finishes an update, the open window reloads itself and keeps the sketch. It waits while
+// you're talking, drawing, typing text, playing back, or answering a question on screen.
+const RELOAD_KEY = "sketchcollab.reloading";
+let appVersion = null, reloading = false, updateWaiting = false;
+async function checkForUpdate() {
+  if (!server || reloading) return;
+  let v;
+  try { v = (await (await fetch("/api/version", { cache: "no-store" })).json()).version; } catch (_) { return; }
+  if (appVersion === null) { appVersion = v; return; }
+  if (v === appVersion) return;
+  const busy = speech.isRunning() || gesture || live || editing || pb || restorePending || !$("pageDlg").hidden || $("save").disabled;
+  if (busy) {
+    if (!updateWaiting) { updateWaiting = true; toast("A new version of SketchCollab is ready. It loads as soon as you finish what you're doing.", 6000); }
+    return;
+  }
+  reloading = true;
+  clearTimeout(draftTimer);
+  try { if (hasContent()) await saveDraft(); else await idbDo("readwrite", st => st.delete("draft")); } catch (_) {}
+  try { sessionStorage.setItem(RELOAD_KEY, "1"); } catch (_) {}
+  location.reload();
+}
+setInterval(checkForUpdate, 2000);
 
 // ---------------------------------------------------------------- save, send, copy
 let server = null;
