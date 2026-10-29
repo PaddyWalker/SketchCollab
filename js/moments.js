@@ -48,12 +48,21 @@ export function momentRange(m) {
   const a = Math.min(m.start, ...m.segs.map(s => s.t0)), b = Math.max(m.end, ...m.segs.map(s => s.t0));
   return a === b ? fmt(a) : `${fmt(a)} – ${fmt(b)}`;
 }
-export const momentText = m => m.segs.map(s => s.src === "typed" ? `(typed) ${s.text}` : s.text).join(" ");
+export const momentText = m => m.segs.map(s => `${s.by ? s.by + ": " : ""}${s.src === "typed" ? `(typed) ${s.text}` : s.text}`).join(" ");
 
 // ---------- describing a moment in words ----------
 const shapeWord = { rect: "rectangle", ellipse: "ellipse", line: "line", arrow: "arrow" };
 function flatten(evs) { const out = []; for (const e of evs) e.type === "batch" ? out.push(...flatten(e.events)) : out.push(e); return out; }
+// In a team session, say who did what: "Rachel: Drew 2 lines… Paddy: Moved a piece…".
 export function describe(m, doc, before, after) {
+  const by = [...new Set(m.evs.map(e => e.by).filter(Boolean))];
+  if (!by.length) return describeAll(m, doc, before, after);
+  const parts = by.map(b => `${b}: ${describeAll({ ...m, evs: m.evs.filter(e => e.by === b) }, doc, before, after)}`);
+  const unnamed = m.evs.filter(e => !e.by);
+  if (unnamed.length) parts.unshift(describeAll({ ...m, evs: unnamed }, doc, before, after));
+  return parts.join(" ");
+}
+function describeAll(m, doc, before, after) {
   if (!m.evs.length) return "Nothing changed on the drawing during this part.";
   const W = after.size.w, H = after.size.h, out = [];
   const evs = flatten(m.evs), added = [];
@@ -180,6 +189,7 @@ export function wordsText(doc, state, moments, lengthMs, files) {
   const evs = flatten(doc.events);
   L.push(`# ${doc.title ? "SketchCollab: " + doc.title : "SketchCollab session"}`, "");
   L.push(`${new Date(doc.created).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })} · ${fmt(lengthMs)} long · ${moments.length} moments · drawing ${state.size.w} × ${state.size.h} on ${doc.paper} paper · ${state.layers.length} layer${state.layers.length > 1 ? "s" : ""} · ${evs.filter(e => e.type === "point").length} pointing gestures`, "");
+  if (doc.team?.length) L.push(`A team session with ${doc.team.map(p => p.host ? `${p.name} (host)` : p.name).join(", ")}. Each line says who said or did it.`, "");
   L.push("Each moment is something said (or typed) together with what was done on the drawing while saying it.");
   if (files) {
     L.push("In the moment pictures, things changed during that moment glow yellow, everything else is faded, and pointing is a pink dashed arrow (a ring for a tap).", "");
@@ -192,13 +202,13 @@ export function wordsText(doc, state, moments, lengthMs, files) {
   moments.forEach((m, i) => {
     const { before, after } = momentStates(doc, m);
     L.push(`### ${i + 1} · ${momentRange(m)}`);
-    m.segs.forEach(s => L.push(`**${s.src === "typed" ? "Typed" : "Said"}:** “${s.text}”`, ""));
+    m.segs.forEach(s => L.push(`**${s.by ? `${s.by} ${s.src === "typed" ? "typed" : "said"}` : s.src === "typed" ? "Typed" : "Said"}:** “${s.text}”`, ""));
     L.push(`**On the drawing:** ${describe(m, doc, before, after)}`, "");
     if (files) L.push(`![Moment ${i + 1}](moments/${String(i + 1).padStart(2, "0")}.png)`, "");
   });
   L.push("## Timeline", "", "Exact order of words and drawing. Speech times are when the words were picked up, often a second after they started.", "");
   const lines = [];
-  doc.speech.forEach(s => lines.push({ t: s.t0, line: `${s.src === "typed" ? "typed" : "said"} “${s.text}”` }));
+  doc.speech.forEach(s => lines.push({ t: s.t0, line: `${s.by ? s.by + " " : ""}${s.src === "typed" ? "typed" : "said"} “${s.text}”` }));
   moments.forEach((m, i) => { if (m.evs.length) { const { before, after } = momentStates(doc, m); lines.push({ t: m.start, line: `drawing: ${describe(m, doc, before, after)} (moment ${i + 1})` }); } });
   lines.sort((a, b) => a.t - b.t).forEach(e => L.push(`- \`${fmt(e.t)}\` ${e.line}`));
   return L.join("\n");

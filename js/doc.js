@@ -18,7 +18,8 @@ export function newDoc(size = DEFAULT_SIZE) {
     events: [], speech: [], audio: [], assets: {}, nextId: 1,
   };
 }
-export const newId = (doc, prefix = "p") => prefix + doc.nextId++;
+// In a team session each guest's ids carry their own tag, so two people never make the same id.
+export const newId = (doc, prefix = "p") => prefix + (doc.idPrefix || "") + doc.nextId++;
 
 export function initialState(doc) {
   return {
@@ -106,8 +107,9 @@ export function apply(state, ev) {
       break;
     case "layer": applyLayer(state, ev, out); break;
     case "canvas": {
-      const dx = ev.anchor === "center" ? (ev.w - state.size.w) / 2 : 0, dy = ev.anchor === "center" ? (ev.h - state.size.h) / 2 : 0;
-      state.size = { w: ev.w, h: ev.h };
+      const w = Math.max(100, Math.min(4096, Math.round(+ev.w) || state.size.w)), h = Math.max(100, Math.min(4096, Math.round(+ev.h) || state.size.h));
+      const dx = ev.anchor === "center" ? (w - state.size.w) / 2 : 0, dy = ev.anchor === "center" ? (h - state.size.h) / 2 : 0;
+      state.size = { w, h };
       if (dx || dy) for (const p of state.pieces.values()) p.tf = mul(translate(dx, dy), p.tf);
       out.sizeChanged = true;
       break;
@@ -122,6 +124,7 @@ function applyLayer(state, ev, out) {
   out.layersChanged = true;
   switch (ev.op) {
     case "add": {
+      if (L.length >= 100 || state.order[ev.id]) break;   // at most 100 layers, and never two with one id
       const at = ev.above ? L.findIndex(l => l.id === ev.above) + 1 : L.length;
       L.splice(at > 0 ? at : L.length, 0, { id: ev.id, name: ev.name, visible: true, locked: false, opacity: 1 });
       state.order[ev.id] = [];
@@ -146,7 +149,7 @@ function applyLayer(state, ev, out) {
 
 export function replay(doc, upto = doc.events.length) {
   const s = initialState(doc);
-  for (let i = 0; i < upto; i++) apply(s, doc.events[i]);
+  for (let i = 0; i < upto; i++) { try { apply(s, doc.events[i]); } catch (_) { /* a broken change is skipped, never fatal */ } }
   return s;
 }
 

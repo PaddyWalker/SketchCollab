@@ -64,6 +64,32 @@ where you lift.
 
 Lines drawn before this was added keep their original look.
 
+## Team sessions
+
+Sketch and talk an idea out with up to 10 people, from anywhere.
+
+1. Press **Invite** (top bar), type your name, and press **Start team session**. SketchCollab makes a secure
+   link from this computer using Cloudflare's free quick tunnel (`tools/cloudflared.exe`) and shows the link
+   and a 6-digit join code. **Copy invite** puts both on the clipboard for a message.
+2. People open the link in Chrome or Edge, type their name and the code, and allow the microphone.
+3. Everyone draws on the same page. You see each other's lines as they're drawn and each other's cursors with
+   names. Each person presses Start talking on their own device, and their words appear in What you said
+   with their name and colour. Their voice is recorded too, for playback.
+4. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
+   session (**Team** → **End session**).
+5. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.
+
+Good to know:
+
+- The link and code only work while your SketchCollab is open and the session is running. Each session gets
+  a new link. Ending the session closes the link.
+- Guests see only the drawing page itself: nothing else on your computer, and they can't save or send.
+  Their own words and drawing stay in your session.
+- If someone's page reloads or their connection drops, they rejoin by themselves.
+- `tools/cloudflared.exe` is downloaded from Cloudflare's official releases and isn't kept in the GitHub repo.
+  On another PC, download `cloudflared-windows-amd64.exe` from
+  https://github.com/cloudflare/cloudflared/releases and save it as `tools/cloudflared.exe`.
+
 ## Pictures
 
 Import pictures with the button on the left, paste them (for example a screen snip, Win+Shift+S then

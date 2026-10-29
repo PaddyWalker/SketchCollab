@@ -4,6 +4,7 @@ import { $, I, mul, applyM, inv, translate, scaleAbout, scaleOf, makeCanvas, box
 import { newDoc, newId, initialState, apply, replay, docBox, hitTest, samplePoints, toLocal } from "./doc.js";
 import { BRUSHES, FONTS, fontCss, paperColor, getImage, preloadAssets, forgetImages, setImageReadyHandler, renderPiece, renderLayer, renderComposite, drawGrid, drawEraserPts, drawShape, drawPointing, measureText } from "./render.js";
 import { OneEuro, SpeedPressure, drawInk, tidy, detectShape, shapePoints } from "./ink.js";
+import { TeamLink, throttle } from "./team.js";
 import * as speech from "./speech.js";
 import { buildMoments, momentCanvas, storyboardCanvas, wordsText, momentText } from "./moments.js";
 
@@ -138,6 +139,7 @@ function draw() {
       c.globalAlpha = 1;
     }
     if (floating) { c.save(); c.transform(...floating.m); c.drawImage(floating.canvas, 0, 0); c.restore(); }
+    if (team) for (const lv of team.lives.values()) if (lv.props && lv.pts.length) drawInk(c, lv.props, lv.pts, false);   // others' lines as they draw them
   }
   c.restore();
   drawOverlay(c);
@@ -161,9 +163,11 @@ setImageReadyHandler(() => { redrawAll(); });
 // ---------------------------------------------------------------- events, undo
 function commit(ev) {
   if (ev.t0 === undefined) ev.t0 = speech.now();
+  if (team) { ev.id ||= newId(doc, "e"); ev.who = team.id; ev.by = team.name; }
   doc.events.push(ev);
   if (ev.type !== "point") { redoStack = []; speech.step(1000); }   // while not talking, each action moves the clock on a little
   afterApply(apply(state, ev));
+  if (team) teamSendEvent(ev);
   changed();
 }
 // Undo or redo in the middle of a drag would pull the piece out from under the mouse, so finish that first.
@@ -187,18 +191,27 @@ function rebuild() {
   sel = blankSel(); hiddenIds = null; floating = null;
   redrawAll(); renderLayers(); renderOptions(); updateZoomLabel();
 }
+// In a team session, undo only takes back your own changes.
+const mine = e => !team || (e.who ?? "h") === team.id;
 function undo() {
   if (pb) stopPlayback();
   interruptGesture();
   for (let i = doc.events.length - 1; i >= 0; i--) {
-    if (doc.events[i].type !== "point") { redoStack.push(doc.events.splice(i, 1)[0]); rebuild(); changed(); return; }
+    const e = doc.events[i];
+    if (e.type === "point" || !mine(e)) continue;
+    redoStack.push(doc.events.splice(i, 1)[0]); rebuild(); changed();
+    if (team) { team.pending.delete(e.id); team.link.send({ t: "remove", id: e.id }); }
+    return;
   }
+  if (team) toast("Nothing of yours left to undo.", 1800);
 }
 function redo() {
   if (pb) stopPlayback();
   interruptGesture();
   const ev = redoStack.pop(); if (!ev) return;
-  doc.events.push(ev); afterApply(apply(state, ev)); changed();
+  doc.events.push(ev); afterApply(apply(state, ev));
+  if (team) teamSendEvent(ev);
+  changed();
 }
 
 // ---------------------------------------------------------------- selection
@@ -326,6 +339,7 @@ function liveAdd(c) {
   }
   else if (Math.hypot(c.sx - L.anchor.sx, c.sy - L.anchor.sy) > HOLD_STILL) L.anchor = { sx: c.sx, sy: c.sy, ms: performance.now() };
   requestLive();
+  if (team) sendLive();
 }
 // Every frame while drawing: let the line catch up when the pen pauses, and snap after a hold.
 function liveLoop() {
@@ -371,7 +385,7 @@ function finishLive() {
   endLive({ sx: L.raw.sx, sy: L.raw.sy, x: (L.raw.sx - V.x) / V.z, y: (L.raw.sy - V.y) / V.z, t: speech.now(), ts: L.lastTs });
 }
 function stopLive() {
-  if (live) clearInterval(live.timer);
+  if (live) { clearInterval(live.timer); if (team && live.sentProps) team.link.send({ t: "liveEnd" }, false); }
   live = null;
   liveCanvas?.getContext("2d").clearRect(0, 0, liveCanvas.width, liveCanvas.height);
 }
@@ -883,6 +897,7 @@ function drawOverlay(c) {
     c.beginPath(); c.arc(pulses[i].x, pulses[i].y, (14 + a * 26) * px, 0, 7); c.stroke(); c.restore();
   }
   if (pulses.length) requestRender();
+  if (team) drawCursors(c, px);
   if (hoverPos && !pb && (settings.tool === "brush" || settings.tool === "eraser") && !spaceDown) {
     const r = (settings.tool === "eraser" ? settings.eraserSize : settings.brushes[settings.brush].size) / 2;
     if (r * V.z > 3) { c.save(); c.lineWidth = px; c.strokeStyle = "rgba(255,255,255,.9)"; c.beginPath(); c.arc(hoverPos[0], hoverPos[1], r, 0, 7); c.stroke(); c.strokeStyle = "rgba(0,0,0,.7)"; c.setLineDash([3 * px, 3 * px]); c.stroke(); c.restore(); }
@@ -945,6 +960,7 @@ view.addEventListener("pointermove", e => {
     return;
   }
   if (!gesture && !e.buttons) hoverPoint(c);
+  if (team) sendCursor(c.x, c.y);
   if (settings.tool === "move") { const sb = selectionBox(); const h = sb && handleAt(sb, c.sx, c.sy); view.style.cursor = h ? (h.k === "x" ? "ew-resize" : h.k === "y" ? "ns-resize" : "nwse-resize") : sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 ? "move" : "default"; }
   if (settings.tool === "brush" || settings.tool === "eraser") requestRender();
 });
@@ -961,7 +977,7 @@ function endPointer(e, cancel) {
 }
 view.addEventListener("pointerup", e => endPointer(e, false));
 view.addEventListener("pointercancel", e => endPointer(e, true));
-view.addEventListener("pointerleave", () => { hoverPos = null; clearTimeout(dwellTimer); hover = []; requestRender(); });
+view.addEventListener("pointerleave", () => { hoverPos = null; clearTimeout(dwellTimer); hover = []; requestRender(); if (team) sendCursor(null, null); });
 view.addEventListener("contextmenu", e => e.preventDefault());
 function cancelToolGesture() {
   if (live) stopLive();
@@ -1242,7 +1258,7 @@ const PLAY = '<svg viewBox="0 0 12 12"><path d="M3 1.5l7.5 4.5L3 10.5z"/></svg>'
 let tlTimer = null;
 function renderTimelineSoon() { clearTimeout(tlTimer); tlTimer = setTimeout(renderTimeline, 120); }
 function renderTimeline() {
-  if (document.activeElement?.classList?.contains("txt")) return;
+  if (document.activeElement?.closest?.(".txt")) return;   // don't redraw a line someone is editing
   const ol = $("timeline"); ol.textContent = "";
   if (!doc.speech.length) {
     ol.append(el("li", { className: "empty", innerHTML: "<b>Nothing yet.</b> Press <b>Start talking</b> (or R) and explain your idea while you draw. Your words show up here, lined up with what you draw. Press ▶ on a line to watch and hear that part again. Click a line to fix a word." }));
@@ -1256,9 +1272,17 @@ function renderTimeline() {
     play.onclick = () => playSeg(seg);
     const time = el("time", { textContent: fmt(seg.t0) });
     const body = el("div"); body.style.minWidth = "0";
-    const p = el("p", { className: "txt", textContent: seg.text, spellcheck: true }); p.contentEditable = "true";
-    p.onblur = () => { const v = p.textContent.trim(); if (!v) { p.textContent = seg.text; return; } if (v !== seg.text) { seg.text = v; changed(); } };
-    p.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); p.blur(); } };
+    // In a team session you can fix your own lines (the host can fix anyone's).
+    const canEdit = !team || team.host || seg.who === team.id;
+    const p = el("p", { className: "txt", spellcheck: true });
+    if (seg.by) { const w = el("span", { className: "who" }), dot = el("i"); dot.style.background = seg.color || "#5a6373"; w.append(dot, seg.by); p.append(w); }
+    const words = el("span", { textContent: seg.text }); p.append(words);
+    if (canEdit) words.contentEditable = "true";
+    words.onblur = () => {
+      const v = words.textContent.trim(); if (!v) { words.textContent = seg.text; return; }
+      if (v !== seg.text) { seg.text = v; changed(); if (team && seg.id) team.link.send({ t: "speechEdit", id: seg.id, text: v }); }
+    };
+    words.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); words.blur(); } };
     body.append(p);
     const meta = el("div", { className: "meta" }), m = changes.get(seg), n = m ? m.evs.filter(e => e.type !== "point").length : 0;
     if (n) meta.append(el("span", { className: "chip ink", textContent: `goes with ${n} change${n > 1 ? "s" : ""}` }));
@@ -1267,12 +1291,17 @@ function renderTimeline() {
     if (meta.childNodes.length) body.append(meta);
     const del = el("button", { className: "del", type: "button", title: "Delete this line", textContent: "×" });
     del.setAttribute("aria-label", "Delete this line");
-    del.onclick = () => { doc.speech.splice(doc.speech.indexOf(seg), 1); changed(); };
+    del.onclick = () => { doc.speech.splice(doc.speech.indexOf(seg), 1); changed(); if (team && seg.id) team.link.send({ t: "speechDel", id: seg.id }); };
+    if (!canEdit) del.hidden = true;
     li.append(play, time, body, del); ol.append(li);
   });
   if (!pb) ol.scrollTop = ol.scrollHeight;
 }
 function addSegment(seg) {
+  if (team) { seg.id ||= newId(doc, "s"); seg.who = team.id; seg.by = team.name; seg.color = team.color; team.link.send({ t: "speech", seg }); }
+  insertSegment(seg);
+}
+function insertSegment(seg) {
   let i = doc.speech.length; while (i > 0 && doc.speech[i - 1].t0 > seg.t0) i--;
   doc.speech.splice(i, 0, seg); changed();
 }
@@ -1283,7 +1312,7 @@ $("noteForm").onsubmit = e => {
   const t = speech.now(); addSegment({ t0: t, t1: t, text: v, src: "typed" }); $("note").value = "";
   speech.step(3000);
 };
-$("title").oninput = () => { doc.title = $("title").value; changed(); };
+$("title").oninput = () => { doc.title = $("title").value; changed(); teamMeta(); };
 
 // ---------------------------------------------------------------- playback
 // Play starts at the line you pressed (the drawing so far is already shown). It stops when that line's
@@ -1384,7 +1413,12 @@ function startRec() {
     onInterim: t => { $("interim").textContent = t ? t + " …" : ""; },
     onMic: setMic,
     onToast: toast,
-    onAudio: ({ t0, dur, blob }) => { if (doc !== target) return; const id = newId(doc, "a"); doc.audio.push({ id, t0, dur, type: blob.type }); blobs.set(id, blob); changed(); },
+    onAudio: ({ t0, dur, blob }) => {
+      if (doc !== target) return;
+      const id = newId(doc, "a"), meta = { id, t0, dur, type: blob.type, ...(team ? { who: team.id, by: team.name } : {}) };
+      doc.audio.push(meta); blobs.set(id, blob); changed();
+      if (team) uploadAudio(meta, blob);   // so everyone can play back what you said
+    },
   });
   recBtn.classList.add("on"); $("recLabel").textContent = "Stop";
   clearInterval(tickTimer); tickTimer = setInterval(() => { $("clock").textContent = fmt(speech.now()); }, 250);
@@ -1425,6 +1459,7 @@ $("pageForm").onsubmit = e => {
     if (pagePaper !== "dark" && wasDark && settings.primary === "#f4f6fa") setColor("primary", "#1f2430");
   }
   doc.grid = $("pageGrid").checked;
+  teamMeta();
   $("pageDlg").hidden = true; changed(); requestRender(); updateZoomLabel();
 };
 function applyTheme() {
@@ -1441,6 +1476,7 @@ async function idbDo(mode, fn) { const db = await idb(); return new Promise((res
 let draftTimer, restorePending = false;   // while the "pick it up" question is open, the old draft is kept safe
 function changed() {
   dirty = true; renderTimelineSoon();
+  if (isGuestPage) return;   // guests' work lives in the host's session, not in a draft here
   clearTimeout(draftTimer); if (!restorePending) draftTimer = setTimeout(saveDraft, 1200);
 }
 async function saveDraft() {
@@ -1487,7 +1523,7 @@ armed($("new"), "Sure? Tap again", async () => {
   $("title").value = ""; $("clock").textContent = "00:00"; $("hint").hidden = false; dirty = false;
   toast("New session started.");
 });
-window.addEventListener("beforeunload", e => { if (reloading) return; if (dirty && hasContent()) { saveDraft(); e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", e => { if (reloading || isGuestPage) return; if (dirty && hasContent()) { saveDraft(); e.preventDefault(); e.returnValue = ""; } });
 
 // When Claude finishes an update, the open window reloads itself and keeps the sketch. It waits while
 // you're talking, drawing, typing text, playing back, or answering a question on screen.
@@ -1499,7 +1535,7 @@ async function checkForUpdate() {
   try { v = (await (await fetch("/api/version", { cache: "no-store" })).json()).version; } catch (_) { return; }
   if (appVersion === null) { appVersion = v; return; }
   if (v === appVersion) return;
-  const busy = speech.isRunning() || gesture || live || editing || pb || restorePending || !$("pageDlg").hidden || $("save").disabled;
+  const busy = speech.isRunning() || gesture || live || editing || pb || restorePending || !$("pageDlg").hidden || $("save").disabled || !$("teamDlg").hidden || !$("joinDlg").hidden;
   if (busy) {
     if (!updateWaiting) { updateWaiting = true; toast("A new version of SketchCollab is ready. It loads as soon as you finish what you're doing.", 6000); }
     return;
@@ -1515,11 +1551,21 @@ setInterval(checkForUpdate, 2000);
 // ---------------------------------------------------------------- save, send, copy
 let server = null;
 async function checkServer() {
-  try { const r = await fetch("/api/ping", { cache: "no-store" }); if (r.ok) { server = await r.json(); $("saveHint").textContent = `Saves go to ${server.folder}`; return; } } catch (_) {}
+  try {
+    const r = await fetch("/api/ping", { cache: "no-store" });
+    if (r.ok) {
+      server = await r.json();
+      $("saveHint").textContent = server.host ? `Saves go to ${server.folder}` : "You're a guest: the host saves the session and sends it to Claude.";
+      $("invite").hidden = !server.host || !server.tunnelReady;
+      applyRoleUI();
+      return;
+    }
+  } catch (_) {}
   $("saveHint").textContent = "Opened without start.bat, so Save downloads the files instead, and Send to Claude isn't available.";
 }
 const hasContent = () => doc.events.length > 0 || doc.speech.length > 0;
 async function settle() {
+  if (team) doc.team = team.members.map(m => ({ name: m.name, host: m.host }));   // who took part, for the notes
   if (editing) commitText();
   if (speech.isRunning()) { await stopRec(); await sleep(500); }   // the last words can arrive just after
   stopPlayback();
@@ -1534,15 +1580,17 @@ function sessionName() {
 const b64 = c => c.toDataURL("image/png").split(",")[1];
 const blobB64 = blob => new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(blob); });
 const extOf = dataUrl => /^data:image\/jpe?g/.test(dataUrl) ? "jpg" : /^data:image\/webp/.test(dataUrl) ? "webp" : /^data:image\/gif/.test(dataUrl) ? "gif" : "png";
+// The pictures an event uses (imported photos, fills, cut-out shapes).
+function eventAssets(ev, used = new Set()) {
+  if (ev.type === "batch") ev.events.forEach(e => eventAssets(e, used));
+  const ps = ev.type === "add" ? [ev.piece] : ev.type === "addMany" ? ev.pieces : [];
+  for (const p of ps) { if (p.asset) used.add(p.asset); for (const c of [...(p.clips || []), ...(p.masks || [])]) if (c.asset) used.add(c.asset); }
+  if (ev.type === "cut") ev.cuts.forEach(c => { if (c.clip.asset) used.add(c.clip.asset); });
+  return used;
+}
 function usedAssets() {
   const used = new Set();
-  const visit = ev => {
-    if (ev.type === "batch") ev.events.forEach(visit);
-    const ps = ev.type === "add" ? [ev.piece] : ev.type === "addMany" ? ev.pieces : [];
-    for (const p of ps) { if (p.asset) used.add(p.asset); for (const c of [...(p.clips || []), ...(p.masks || [])]) if (c.asset) used.add(c.asset); }
-    if (ev.type === "cut") ev.cuts.forEach(c => { if (c.clip.asset) used.add(c.clip.asset); });
-  };
-  doc.events.forEach(visit);
+  doc.events.forEach(ev => eventAssets(ev, used));
   return [...used].filter(id => doc.assets[id]);
 }
 async function exportSession(send) {
@@ -1567,6 +1615,7 @@ async function exportSession(send) {
     const assets = {};
     for (const id of usedAssets()) { const url = doc.assets[id], path = `assets/${id}.${extOf(url)}`; assets[id] = path; files.push({ path, base64: url.split(",")[1] }); }
     const audio = [];
+    if (team) { await Promise.all(doc.audio.map(a => fetchAudio(a.id))); }   // everyone's voice, not just yours
     for (const a of doc.audio) { const blob = audioBlobs.get(a.id); if (!blob) continue; const path = `audio/${a.id}.${/mp4/.test(a.type) ? "m4a" : "webm"}`; audio.push({ ...a, file: path }); files.push({ path, base64: await blobB64(blob) }); }
     const meta = { ...doc, assets, audio, length_ms: len, layers: state.layers.map((L, i) => ({ ...L, file: `layers/${pad2(i + 1)}.png`, pieces: state.order[L.id].length })), size: state.size };
     files.push({ path: "session.json", text: JSON.stringify(meta) });
@@ -1600,11 +1649,280 @@ $("copyWords").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- start
+// ---------------------------------------------------------------- team sessions
+// The host's app (on this computer) starts a session; guests open the secure link. Everything anyone draws
+// or says goes to the host's server, which puts it in order and passes it on to everyone.
+const TEAM_KEY = "sketchcollab.team";
+const isGuestPage = !["localhost", "127.0.0.1"].includes(location.hostname);
+let team = null;   // { id, name, color, token, host, link, members, pending, cursors, lives, shared, url, code }
+
+function beginTeam(info) {
+  info.clientNow ||= Date.now();   // when serverNow was true, so the clock is right again after a reload
+  team = { ...info, members: info.members || [], pending: new Map(), cursors: new Map(), lives: new Map(), shared: new Set(Object.keys(doc.assets)), fails: 0, everOnline: false };
+  const skew = info.serverNow - info.clientNow;
+  speech.useTeamClock(() => Date.now() + skew - info.startEpoch);
+  // A fresh tag on every page load, so ids never repeat even after a reload restarts the numbering.
+  doc.idPrefix = `${info.id}${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}_`;
+  try { sessionStorage.setItem(TEAM_KEY, JSON.stringify(info)); } catch (_) {}
+  team.link = new TeamLink(info.token, { onMessage: onTeamMessage, onStatus: onTeamStatus });
+  renderPeople(); applyRoleUI();
+}
+function onTeamStatus(s) {
+  if (!team) return;
+  team.online = s === "online";
+  if (team.online) { team.everOnline = true; team.fails = 0; }
+  else if (!team.everOnline && ++team.fails >= 3) {   // the saved session no longer exists
+    endTeamLocal(null);
+    if (isGuestPage) showJoin("That session has ended or the link changed. Ask the host for the new link and code.");
+    return;
+  }
+  renderPeople();
+}
+function onTeamMessage(msg) {
+  if (!team) return;
+  switch (msg.t) {
+    case "hello": {
+      const lost = loadTeamState(msg.state, msg.serverNow);
+      team.link.flush();
+      for (const ev of lost) teamSendEvent(ev);   // sent just before the connection dropped: send again (duplicates are ignored)
+      break;
+    }
+    case "code": team.code = msg.code; try { sessionStorage.setItem(TEAM_KEY, JSON.stringify({ ...JSON.parse(sessionStorage.getItem(TEAM_KEY)), code: msg.code })); } catch (_) {} renderTeamDlg(); break;
+    case "members": team.members = msg.members; renderPeople(); renderTeamDlg(); break;
+    case "event": onTeamEvent(msg.ev, msg.assets); break;
+    case "remove": {
+      const i = doc.events.findIndex(e => e.id === msg.id);
+      if (i >= 0) { doc.events.splice(i, 1); teamRebuild(); changed(); }
+      break;
+    }
+    case "speech": if (!doc.speech.some(s => s.id === msg.seg.id)) insertSegment(msg.seg); break;
+    case "speechEdit": { const s = doc.speech.find(s => s.id === msg.id); if (s) { s.text = msg.text; changed(); } break; }
+    case "speechDel": { const i = doc.speech.findIndex(s => s.id === msg.id); if (i >= 0) { doc.speech.splice(i, 1); changed(); } break; }
+    case "meta": applyMeta(msg); break;
+    case "cursor": team.cursors.set(msg.who, { x: msg.x, y: msg.y, at: performance.now() }); requestRender(); break;
+    case "live": {
+      let lv = team.lives.get(msg.who);
+      if (msg.reset || !lv) lv = { props: msg.props || lv?.props, pts: [] };
+      if (lv.pts.length < 20000) lv.pts.push(...(msg.pts || []).filter(q => Array.isArray(q) && q.length >= 3).slice(0, 20000 - lv.pts.length));
+      team.lives.set(msg.who, lv); requestRender();
+      break;
+    }
+    case "liveEnd": team.lives.delete(msg.who); requestRender(); break;
+    case "audio": if (!doc.audio.some(a => a.id === msg.meta.id)) { doc.audio.push(msg.meta); changed(); } fetchAudio(msg.meta.id); break;
+    case "ended": endTeamLocal("ended"); break;
+    case "removed": endTeamLocal("removed"); break;
+  }
+}
+// Everything as the server has it, plus anything of ours still on its way.
+function loadTeamState(st, serverNow) {
+  const skew = serverNow - Date.now();
+  speech.useTeamClock(() => Date.now() + skew - st.startEpoch);
+  const have = new Set(st.events.map(e => e.id));
+  for (const id of [...team.pending.keys()]) if (have.has(id)) team.pending.delete(id);
+  const lost = [...team.pending.values()];
+  doc.events = [...st.events, ...lost];
+  doc.speech = st.speech; doc.audio = st.audio;
+  for (const [id, url] of Object.entries(st.assets)) { if (safeAsset(url)) doc.assets[id] = url; team.shared.add(id); }
+  const b = st.base || {}, first = !team.loaded;
+  if (!team.host) { if (b.size0) doc.size0 = b.size0; for (const k of ["paper", "grid", "title", "created"]) if (k in b) doc[k] = b[k]; $("title").value = doc.title || ""; }
+  team.members = st.members; team.loaded = true;
+  rebuild(); if (first && !team.host) fit();
+  renderTimeline(); renderPeople(); renderTeamDlg();
+  preloadAssets(doc).then(redrawAll);
+  doc.audio.forEach(a => fetchAudio(a.id));
+  $("hint").hidden = hasContent();
+  return lost;
+}
+// Only real pictures (never links to other websites) are accepted from anyone in the session.
+const safeAsset = url => typeof url === "string" && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url);
+function onTeamEvent(ev, assets) {
+  for (const [id, url] of Object.entries(assets || {})) { if (!doc.assets[id] && safeAsset(url)) doc.assets[id] = url; team.shared.add(id); }
+  if (team.pending.has(ev.id)) { team.pending.delete(ev.id); return; }   // our own, now in its place
+  if (doc.events.some(e => e.id === ev.id)) return;
+  team.lives.delete(ev.who);
+  if (!team.pending.size) {
+    doc.events.push(ev);
+    try { afterApply(apply(state, ev)); } catch (_) { teamRebuild(); }   // a broken change is skipped, never fatal
+  }
+  else {   // it reached the server before something of ours: put it first, as everyone else has it
+    const first = doc.events.findIndex(e => team.pending.has(e.id));
+    doc.events.splice(first < 0 ? doc.events.length : first, 0, ev);
+    teamRebuild();
+  }
+  changed();
+}
+function teamRebuild() {
+  if (floating) { drop(null); drag = null; }
+  rebuild();
+}
+function teamSendEvent(ev) {
+  const assets = {};
+  for (const id of eventAssets(ev)) if (!team.shared.has(id) && doc.assets[id]) { assets[id] = doc.assets[id]; team.shared.add(id); }
+  team.pending.set(ev.id, ev);
+  team.link.send({ t: "event", ev, assets });
+}
+function teamMeta() { if (team) team.link.send({ t: "meta", paper: doc.paper, grid: doc.grid, title: doc.title }); }
+function applyMeta(m) {
+  if ("paper" in m) doc.paper = m.paper;
+  if ("grid" in m) doc.grid = m.grid;
+  if ("title" in m && document.activeElement !== $("title")) { doc.title = m.title; $("title").value = m.title || ""; }
+  changed(); requestRender();
+}
+const sendCursor = throttle((x, y) => { if (team) team.link.send({ t: "cursor", x, y }, false); }, 60);
+const sendLive = throttle(() => {
+  if (!team || !live) return;
+  const L = live, from = L.sentN || 0;
+  if (from >= L.pts.length && L.sentProps) return;
+  team.link.send({ t: "live", pts: L.pts.slice(from), props: L.sentProps ? undefined : L.props, reset: !L.sentProps }, false);
+  L.sentProps = true; L.sentN = L.pts.length;
+}, 70);
+async function uploadAudio(meta, blob, tries = 3) {
+  if (!team) return;
+  try {
+    const r = await fetch(`/api/team/audio?token=${encodeURIComponent(team.token)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...meta, base64: await blobB64(blob) }) });
+    if (r.ok) return;
+    if (r.status === 400 || r.status === 403) throw new Error("refused");
+  } catch (e) { if (e.message === "refused") tries = 1; }
+  if (tries > 1) setTimeout(() => uploadAudio(meta, blob, tries - 1), 3000);
+  else toast("Your voice recording couldn't be shared with the team. It's still kept here.", 5000);
+}
+async function fetchAudio(id) {
+  if (audioBlobs.has(id) || !team) return;
+  try { const r = await fetch(`/api/team/audio/${encodeURIComponent(id)}?token=${encodeURIComponent(team.token)}`); if (r.ok) audioBlobs.set(id, await r.blob()); } catch (_) {}
+}
+const memberOf = id => team?.members.find(m => m.id === id);
+function drawCursors(c, px) {
+  const now = performance.now();
+  for (const [who, cur] of team.cursors) {
+    const m = memberOf(who);
+    if (!m || cur.x == null || now - cur.at > 8000) continue;
+    c.save(); c.translate(cur.x, cur.y); c.scale(px, px);
+    c.fillStyle = m.color; c.strokeStyle = "#fff"; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 17); c.lineTo(4.5, 13); c.lineTo(8, 20); c.lineTo(10.5, 19); c.lineTo(7, 12); c.lineTo(13, 12); c.closePath(); c.fill(); c.stroke();
+    c.font = '700 12px "Atkinson Hyperlegible", "Segoe UI", sans-serif';
+    const w = c.measureText(m.name).width + 12;
+    c.fillRect(12, 18, w, 19); c.fillStyle = "#fff"; c.fillText(m.name, 18, 32);
+    c.restore();
+  }
+}
+function renderPeople() {
+  const box = $("people"); box.textContent = "";
+  box.hidden = !team;
+  if (team) for (const m of team.members) {
+    const chip = el("span", { className: "person" + (m.online ? "" : " off"), title: m.online ? `${m.name} is here` : `${m.name} has left or lost connection` });
+    const dot = el("i"); dot.style.background = m.color; chip.append(dot, m.id === team.id ? `${m.name} (you)` : m.name);
+    box.append(chip);
+  }
+  if (team && !team.online) box.append(el("span", { className: "person off", textContent: "Reconnecting…" }));
+  $("invite").textContent = isGuestPage ? "Leave" : team ? "Team" : "Invite";
+}
+// Guests can't save, send or start over: that's the host's job.
+function applyRoleUI() {
+  for (const id of ["save", "send", "new"]) $(id).hidden = isGuestPage;
+  if (team) $("new").hidden = true;   // starting over mid-session would muddle everyone's drawing
+  if (isGuestPage) { $("invite").hidden = !team; $("restore").hidden = true; }
+}
+function renderTeamDlg() {
+  if ($("teamDlg").hidden) return;
+  $("teamStart").hidden = !!team; $("teamLive").hidden = !team;
+  if (!team) return;
+  $("teamUrl").textContent = team.url || ""; $("teamCode").textContent = team.code || "";
+  const ul = $("teamMembers"); ul.textContent = "";
+  for (const m of team.members) {
+    const li = el("li"), dot = el("i", { className: "" });
+    dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${m.color}`;
+    li.append(dot, el("span", { textContent: `${m.name}${m.host ? " (host)" : ""}${m.online ? "" : ", away"}` }));
+    if (team.host && !m.host) {
+      const b = el("button", { className: "btn", type: "button", textContent: "Remove" });
+      b.onclick = () => fetch("/api/team/kick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: m.id }) });
+      li.append(b);
+    }
+    ul.append(li);
+  }
+}
+function endTeamLocal(reason) {
+  if (!team) return;
+  team.link.close(); team = null;
+  try { sessionStorage.removeItem(TEAM_KEY); } catch (_) {}
+  speech.useTeamClock(null);
+  renderPeople(); applyRoleUI(); renderTeamDlg(); requestRender();
+  if (reason && isGuestPage) {
+    $("endedText").textContent = reason === "removed" ? "The host removed you from the session." : "The host ended the team session. The drawing stays on your screen until you close this page.";
+    $("endedDlg").hidden = false;
+  }
+}
+$("endedOk").onclick = () => { $("endedDlg").hidden = true; };
+$("invite").onclick = () => {
+  if (isGuestPage) { if (team) { team.link.close(); endTeamLocal(null); toast("You left the session."); } return; }
+  $("teamDlg").hidden = false; $("teamErr").hidden = true;
+  if (!team) { $("hostName").value = settings.myName || ""; setTimeout(() => $("hostName").focus(), 0); }
+  renderTeamDlg();
+};
+$("teamCancel").onclick = $("teamClose").onclick = () => { $("teamDlg").hidden = true; };
+$("teamDlg").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") $("teamDlg").hidden = true; });
+$("teamGo").onclick = async () => {
+  const name = $("hostName").value.trim() || "Host", go = $("teamGo");
+  settings.myName = name; saveSettings();
+  go.disabled = true; go.textContent = "Making the secure link…"; $("teamErr").hidden = true;
+  try {
+    if (speech.isRunning()) await stopRec();
+    // Everything so far gets an id (carrying the host's tag), so it can be shared and undone.
+    doc.idPrefix = `h${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}_`;
+    for (const e of doc.events) { e.id ||= newId(doc, "e"); e.who ||= "h"; e.by ||= name; }
+    for (const s of doc.speech) { s.id ||= newId(doc, "s"); }
+    const body = { name, base: { size0: doc.size0, paper: doc.paper, grid: doc.grid, title: doc.title, created: doc.created }, events: doc.events, speech: doc.speech, assets: doc.assets, audio: doc.audio, clock: speech.now() };
+    const r = await fetch("/api/team/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(res.error || "the server refused");
+    beginTeam({ id: res.id, name, color: res.color, token: res.token, host: true, startEpoch: res.startEpoch, serverNow: res.serverNow, url: res.url, code: res.code });
+    for (const a of doc.audio) { const b = audioBlobs.get(a.id); if (b) uploadAudio(a, b); }   // so guests can play back earlier talking too
+    renderTeamDlg();
+  } catch (e) {
+    $("teamErr").textContent = `Couldn't start the team session: ${e.message}`; $("teamErr").hidden = false;
+  } finally { go.disabled = false; go.textContent = "Start team session"; }
+};
+$("copyInvite").onclick = async () => {
+  const text = `Join my SketchCollab session: ${team?.url}\nJoin code: ${team?.code}\n(Open it in Chrome or Edge and allow the microphone.)`;
+  try { await navigator.clipboard.writeText(text); toast("Invite copied. Paste it into a message to your team."); }
+  catch (_) { toast("Couldn't copy here. Select the link and code to copy them yourself."); }
+};
+$("teamEnd").onclick = async () => {
+  try { await fetch("/api/team/end", { method: "POST" }); } catch (_) {}
+  endTeamLocal(null); $("teamDlg").hidden = true; toast("Team session ended. The drawing and everything said stay here: save or send it to Claude as usual.", 6000);
+};
+function showJoin(err) {
+  $("joinDlg").hidden = false; $("joinName").value ||= settings.myName || "";
+  $("joinErr").textContent = err || ""; $("joinErr").hidden = !err;
+  setTimeout(() => ($("joinName").value ? $("joinCode") : $("joinName")).focus(), 0);
+}
+$("joinDlg").addEventListener("keydown", e => e.stopPropagation());
+$("joinForm").onsubmit = async e => {
+  e.preventDefault();
+  const name = $("joinName").value.trim(), code = $("joinCode").value.trim();
+  if (!name || !code) return;
+  $("joinGo").disabled = true;
+  try {
+    const r = await fetch("/api/team/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, code }) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(res.error || "Couldn't join.");
+    settings.myName = name; saveSettings();
+    $("joinDlg").hidden = true;
+    beginTeam({ id: res.id, name: res.name, color: res.color, token: res.token, host: false, startEpoch: res.startEpoch, serverNow: res.serverNow });
+  } catch (err) { showJoin(err.message); } finally { $("joinGo").disabled = false; }
+};
+function resumeTeam() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(TEAM_KEY) || "null"); } catch (_) {}
+  if (saved && saved.host === !isGuestPage) beginTeam(saved);
+  else if (isGuestPage) showJoin();
+}
+
 buildToolbar(); applyTheme();
 document.querySelectorAll(".tool[data-tool]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === settings.tool)));
 setMic(speech.hasSpeech ? "off" : "none");
-rebuild(); renderTimeline(); updateCursor(); offerRestore(); checkServer();
+rebuild(); renderTimeline(); updateCursor(); checkServer(); applyRoleUI();
+if (isGuestPage) resumeTeam(); else offerRestore().then(resumeTeam);
 document.fonts?.ready.then(() => { redrawAll(); });
 
 // For testing from the browser console.
-window.SketchCollab = { get doc() { return doc; }, get state() { return state; }, commit, undo, redo, buildMoments, setTool, get sel() { return sel; }, momentCanvas, wordsText, storyboardCanvas, exportSession, addSegment, fit, get view() { return V; } };
+window.SketchCollab = { get doc() { return doc; }, get state() { return state; }, get team() { return team; }, commit, undo, redo, buildMoments, setTool, get sel() { return sel; }, momentCanvas, wordsText, storyboardCanvas, exportSession, addSegment, fit, get view() { return V; } };

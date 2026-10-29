@@ -174,6 +174,24 @@ button { cursor: pointer; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) translateY(20px); max-width: min(640px, calc(100% - 32px)); background: var(--fg); color: var(--bg); padding: 11px 15px; border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 40; overflow-wrap: anywhere; }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 
+/* team sessions */
+.people { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.person { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; padding: 3px 9px 3px 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+.person i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.person.off { opacity: .45; }
+.who { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; margin-right: 4px; }
+.who i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+.linkbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.linkbox code { font: 500 13px var(--font-mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; flex: 1 1 220px; min-width: 0; }
+.bigcode { font: 700 28px var(--font-mono); letter-spacing: .15em; }
+.mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mlist li { display: flex; align-items: center; gap: 8px; }
+.mlist li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dlg label.field { display: grid; gap: 4px; font-weight: 700; }
+.dlg label.field input { font-weight: 400; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface-2); }
+.dlg .err { color: var(--rec); font-weight: 700; }
+.dlg .muted { color: var(--muted); font-size: 13px; margin: 0; }
+
 @media (max-width: 900px) {
   body { overflow: auto; height: auto; min-height: 100%; }
   .work { display: flex; flex-direction: column; }
@@ -197,6 +215,8 @@ button { cursor: pointer; }
   <div class="brand">Sketch<span>Collab</span></div>
   <button id="rec" class="rec" type="button" title="Start or stop listening (R)"><span class="dot"></span><span id="recLabel">Start talking</span><span id="clock" class="clock">00:00</span></button>
   <input id="title" placeholder="Name this sketch (optional)" maxlength="40" autocomplete="off">
+  <div class="people" id="people" hidden></div>
+  <button class="btn" id="invite" title="Invite people to sketch and talk in this session with you" hidden>Invite</button>
   <div class="spacer"></div>
   <button class="btn" id="copyPic" title="Copy a picture of the whole session to paste into any chat">Copy picture</button>
   <button class="btn" id="copyWords" title="Copy what you said and drew, as text">Copy words</button>
@@ -271,6 +291,41 @@ button { cursor: pointer; }
     </fieldset>
     <div class="actions"><button type="button" class="btn" id="pageCancel">Cancel</button><button type="submit" class="btn primary">Apply</button></div>
   </form>
+</div>
+
+<div class="scrim" id="teamDlg" hidden>
+  <div class="dlg" role="dialog" aria-labelledby="teamTitle">
+    <h3 id="teamTitle">Invite people</h3>
+    <div id="teamStart">
+      <p class="muted">Up to 10 people can sketch and talk in this session with you, from anywhere. SketchCollab makes a secure link from this computer, and the link and join code only work while your app is open.</p>
+      <label class="field">Your name <input id="hostName" maxlength="30" autocomplete="off"></label>
+      <p class="err" id="teamErr" hidden></p>
+      <div class="actions"><button type="button" class="btn" id="teamCancel">Cancel</button><button type="button" class="btn primary" id="teamGo">Start team session</button></div>
+    </div>
+    <div id="teamLive" hidden>
+      <p class="muted">Send people the link and the join code. They open it in Chrome or Edge, type their name and the code, and allow the microphone.</p>
+      <div class="linkbox"><code id="teamUrl"></code><button type="button" class="btn" id="copyInvite">Copy invite</button></div>
+      <div>Join code <div class="bigcode" id="teamCode"></div></div>
+      <ul class="mlist" id="teamMembers"></ul>
+      <div class="actions"><button type="button" class="btn" id="teamEnd">End session</button><button type="button" class="btn primary" id="teamClose">Done</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="joinDlg" hidden>
+  <form class="dlg" id="joinForm" aria-labelledby="joinTitle">
+    <h3 id="joinTitle">Join a SketchCollab session</h3>
+    <p class="muted">Sketch and talk an idea out together. Use Chrome or Edge, and allow the microphone when asked.</p>
+    <label class="field">Your name <input id="joinName" maxlength="30" autocomplete="name" required></label>
+    <label class="field">Join code <input id="joinCode" inputmode="numeric" maxlength="6" autocomplete="off" required></label>
+    <p class="err" id="joinErr" hidden></p>
+    <div class="actions"><button type="submit" class="btn primary" id="joinGo">Join</button></div>
+  </form>
+</div>
+
+<div class="scrim" id="endedDlg" hidden>
+  <div class="dlg"><h3 id="endedTitle">The session has ended</h3><p class="muted" id="endedText">The host ended the team session. The drawing stays on your screen until you close this page.</p>
+    <div class="actions"><button type="button" class="btn primary" id="endedOk">OK</button></div></div>
 </div>
 
 <input type="file" id="importInput" accept="image/*,.svg,.heic,.heif,.avif,.bmp,.ico" multiple hidden>

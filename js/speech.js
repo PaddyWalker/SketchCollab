@@ -3,10 +3,16 @@
 // do, so drawing and typed notes still come in order and in separate moments.
 
 let base = 0, since = null;
-export const now = () => Math.round(base + (since !== null ? performance.now() - since : 0));
-export const isRunning = () => since !== null;
+// In a team session everyone shares one clock that always runs (time since the session began, on the server).
+let teamNow = null, talking = false;
+export const now = () => teamNow ? Math.round(teamNow()) : Math.round(base + (since !== null ? performance.now() - since : 0));
+export const isRunning = () => teamNow ? talking : since !== null;
 export function setClock(ms) { base = ms; since = null; }
-export function step(ms) { if (since === null) base += ms; }
+export function step(ms) { if (!teamNow && since === null) base += ms; }
+export function useTeamClock(fn) {
+  if (fn) { teamNow = fn; return; }
+  if (teamNow) { base = now(); since = talking ? performance.now() : null; teamNow = null; }   // carry on from the team's time
+}
 const PAUSE = 3000;   // gap between talking and not talking, so neither steals the other's moments
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -17,15 +23,16 @@ let gen = 0, audio = null;   // gen: which Start press the audio belongs to
 
 export function start(callbacks) {
   cb = callbacks;
-  if (base > 0) base += PAUSE;
-  since = performance.now();
+  talking = true;
+  if (!teamNow) { if (base > 0) base += PAUSE; since = performance.now(); }
   gen++;
   startSpeech(); startAudio(gen);
 }
 // Resolves once the last audio has been handed over, so nothing arrives late.
 export function stop() {
   const end = now();
-  base = end + PAUSE; since = null;
+  talking = false;
+  if (!teamNow) { base = end + PAUSE; since = null; }
   if (rec) { const r = rec; rec = null; r.onend = () => { cb.onInterim?.(""); if (!micBlocked) cb.onMic?.("off"); }; try { r.stop(); } catch (_) {} }
   cb.onInterim?.("");
   return stopAudio(end);

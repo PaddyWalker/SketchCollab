@@ -3,3 +3,6 @@ sessions/
 
 __pycache__/
 *.pyc
+
+# The secure-link program is downloaded on each PC, not kept in the repo.
+tools/
