@@ -15,10 +15,13 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 
 - **Top:** Start talking, the sketch's name, Copy picture, Copy words, **Save**, **Send to Claude**, New, and
   the theme button (Auto / Light / Dark).
-- **Left:** the tools, the Import pictures button, and your two colours (click one to change it, ⇄ swaps them).
+- **Left, everything for drawing:** the tools, the Import pictures button and your two colours (click one
+  to change it, ⇄ swaps them), with **Layers** below them.
 - **Above the drawing:** the settings for the tool you're using.
-- **Right:** **Layers**, and **What you said**. Each line has a ▶ button that plays back that part, with the
-  drawing redrawing itself and your recorded voice. The ▶ at the top plays the whole session.
+- **Right, everything about the recording:** **What you said**. Each line has a ▶ button that plays back that
+  part, with the drawing redrawing itself and your recorded voice. The ▶ at the top plays the whole session,
+  and ⏩ turns Keep playing on or off.
+- On a phone or tablet, the tools sit above the drawing, and Layers and What you said below it.
 - **Bottom right of the drawing:** the drawing size and paper (click it), and zoom − / + / Fit.
 
 ## Tools (shortcut in brackets)
