@@ -13,11 +13,15 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 
 ## The screen
 
-- **Top:** Start talking, the sketch's name, Copy picture, Copy words, **Save**, **Send to Claude**, New, and
+- **Top:** Start talking, the sketch's name, Copy picture, Copy words, **Save**, **Send to Claude**, and
   the theme button (Auto / Light / Dark).
+- **Tabs, under the top bar:** each tab is its own sketch, with its own drawing, words and voice. **+ New**
+  opens another; × closes one (click twice if it has anything in it). Builds that come back open as tabs
+  next to the sketch they belong to (marked ↳), and a red dot means a tab changed while you were elsewhere.
 - **Left, everything for drawing:** the tools, the Import pictures button and your two colours (click one
   to change it, ⇄ swaps them), with **Layers** below them.
 - **Above the drawing:** the settings for the tool you're using.
+- **Right, at the top: Goals for the build.** What the build has to get right (click the heading to fold it away).
 - **Right, everything about the recording:** **What you said**. Each line has a ▶ button that plays back that
   part, with the drawing redrawing itself and your recorded voice. The ▶ at the top plays the whole session,
   and ⏩ turns Keep playing on or off.
@@ -130,6 +134,25 @@ Each save makes a folder in `sessions\`, named by date and time plus the name yo
 | `assets\` | The pictures you brought in, plus fills and cut-out shapes |
 | `audio\` | Your voice, one file per stretch of talking |
 | `session.json` | Everything, with timings, so the session can be replayed |
+| `request.json` | Written when sent: what's being asked (sketch, build, changes, approved) and the goals |
+
+## Build it, then review it
+
+SketchCollab can hand a sketch to Claude to build (a model, a game piece, an app screen, anything), and bring
+the result back for you to check. Agents follow [AGENT_LOOP.md](AGENT_LOOP.md).
+
+1. **Goals.** Type what the build must get right under **Goals for the build**, or press **Send to Claude** and
+   Claude drafts the list from what you said and drew. Its goals show up marked *Claude*; change, remove or add any.
+2. **Build it** sends the sketch and the goals. The tab says *Building*.
+3. **The build comes back** as a new tab beside your sketch: the agent's pictures on a locked layer *What was
+   built*, its summary, and a goal-by-goal report (Done, Partly, Not yet).
+4. **Review it.** Mark each goal **Good** or **Needs a change** (and say what), draw on the pictures on the *Your
+   notes* layer, and talk through anything that's off, just like a normal sketch.
+5. **Send back for changes** (or **Send back** at the top) and the next build opens as another tab.
+   **Approve** when it's right.
+
+Results land in the `inbox\` folder first; the app picks them up within a few seconds while it's open and
+moves them to `inbox\_done\`.
 
 ## Good to know
 
@@ -138,5 +161,6 @@ Each save makes a folder in `sessions\`, named by date and time plus the name yo
   computer. Firefox doesn't have speech-to-text.
 - The timer only runs while you're talking, so moments line up with your words. Drawing done before you
   start talking is kept as its own moment.
-- If the tab closes by accident, the app offers to pick up the last sketch when it opens again.
+- Every tab is kept in this browser as you go, so closing the window loses nothing: the tabs are all there
+  when it opens again. In a team session everyone draws in one tab, so the other tabs wait until it ends.
 - The server only listens on this computer (`127.0.0.1`), and only accepts saves from the app itself.

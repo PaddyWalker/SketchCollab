@@ -6,3 +6,6 @@ __pycache__/
 
 # The secure-link program is downloaded on each PC, not kept in the repo.
 tools/
+
+# Agent results waiting to be opened (they include your renders and files).
+inbox/

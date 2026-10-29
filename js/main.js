@@ -198,7 +198,7 @@ function undo() {
   interruptGesture();
   for (let i = doc.events.length - 1; i >= 0; i--) {
     const e = doc.events[i];
-    if (e.type === "point" || !mine(e)) continue;
+    if (e.type === "point" || e.build || !mine(e)) continue;   // a review's pictures from the agent stay
     redoStack.push(doc.events.splice(i, 1)[0]); rebuild(); changed();
     if (team) { team.pending.delete(e.id); team.link.send({ t: "remove", id: e.id }); }
     return;
@@ -1312,7 +1312,7 @@ $("noteForm").onsubmit = e => {
   const t = speech.now(); addSegment({ t0: t, t1: t, text: v, src: "typed" }); $("note").value = "";
   speech.step(3000);
 };
-$("title").oninput = () => { doc.title = $("title").value; changed(); teamMeta(); };
+$("title").oninput = () => { doc.title = $("title").value; changed(); teamMeta(); const t = tabOf(curTab); if (t) { t.title = doc.title; renderTabs(); } };
 
 // ---------------------------------------------------------------- playback
 // Play starts at the line you pressed (the drawing so far is already shown). It stops when that line's
@@ -1470,38 +1470,47 @@ function applyTheme() {
 }
 $("theme").onclick = () => { settings.theme = { auto: "light", light: "dark", dark: "auto" }[settings.theme]; saveSettings(); applyTheme(); };
 
-// ---------------------------------------------------------------- drafts in this browser (IndexedDB)
+// ---------------------------------------------------------------- tabs: several sketches open at once (IndexedDB)
+// Each tab keeps its own drawing, words and voice under "tab:<id>", and "tabs" holds the list. A review tab
+// is made from what an agent built and points back to the sketch it came from.
 const idb = () => new Promise((res, rej) => { const r = indexedDB.open("sketchtalk", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 async function idbDo(mode, fn) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv", mode), st = tx.objectStore("kv"), req = fn(st); tx.oncomplete = () => res(req?.result); tx.onerror = () => rej(tx.error); }); }
-let draftTimer, restorePending = false;   // while the "pick it up" question is open, the old draft is kept safe
+const TABS_KEY = "tabs";
+let tabs = [], curTab = null, draftTimer, tabBusy = false, teamStarting = false;
+const tabOf = id => tabs.find(t => t.id === id);
+const newTabId = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+const readTab = async id => { try { return await idbDo("readonly", st => st.get("tab:" + id)); } catch (_) { return null; } };
+function tabInfo(t, d) { Object.assign(t, { title: d.title || "", kind: d.kind || "sketch", round: d.review?.round, parent: d.review?.parentTab, item: d.review?.itemId, session: d.sentAs, status: d.goalsState }); }
 function changed() {
   dirty = true; renderTimelineSoon();
-  if (isGuestPage) return;   // guests' work lives in the host's session, not in a draft here
-  clearTimeout(draftTimer); if (!restorePending) draftTimer = setTimeout(saveDraft, 1200);
+  if (isGuestPage) return;   // guests' work lives in the host's session, not in a tab here
+  clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 1200);
 }
+async function saveTabs() { try { await idbDo("readwrite", st => st.put({ list: tabs, active: curTab }, TABS_KEY)); } catch (_) {} }
 async function saveDraft() {
-  try { await idbDo("readwrite", st => st.put({ doc, clock: speech.now(), audio: [...audioBlobs], activeLayer }, "draft")); } catch (_) {}
+  if (!curTab || isGuestPage) return;
+  const t = tabOf(curTab); if (t) { tabInfo(t, doc); renderTabs(); }
+  try { await idbDo("readwrite", st => { st.put({ doc, clock: speech.now(), audio: [...audioBlobs], activeLayer }, "tab:" + curTab); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
 }
-async function offerRestore() {
-  let d = null, updated = false;
+async function openTabs() {
+  let updated = false;
   try { updated = sessionStorage.getItem(RELOAD_KEY) === "1"; sessionStorage.removeItem(RELOAD_KEY); } catch (_) {}
-  try { d = await idbDo("readonly", st => st.get("draft")); } catch (_) {}
-  const has = d && d.doc && (d.doc.events.length || d.doc.speech.length);
-  if (updated) {   // reloaded for a new version: put the sketch straight back, no question
-    if (has) await loadDraft(d);
-    toast(has ? "Updated to the latest version. Your sketch is just as you left it." : "Updated to the latest version.", 4000);
-    return;
+  let meta = null;
+  try { meta = await idbDo("readonly", st => st.get(TABS_KEY)); } catch (_) {}
+  if (meta?.list?.length) { tabs = meta.list; curTab = tabOf(meta.active) ? meta.active : tabs[0].id; }
+  else {
+    // The first time with tabs: the sketch from before becomes the first tab.
+    let old = null;
+    try { old = await idbDo("readonly", st => st.get("draft")); } catch (_) {}
+    curTab = newTabId(); tabs = [{ id: curTab, title: "", kind: "sketch" }];
+    if (old?.doc) { tabInfo(tabs[0], old.doc); try { await idbDo("readwrite", st => { st.put(old, "tab:" + curTab); st.delete("draft"); }); } catch (_) {} }
+    await saveTabs();
   }
-  if (!has) return;
-  const when = new Date(d.doc.created).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
-  $("restoreText").textContent = `You have a sketch from ${when}${d.doc.title ? ` (“${d.doc.title}”)` : ""} that you can pick up again. Picking it up replaces anything drawn since this page opened.`;
-  $("restore").hidden = false; restorePending = true;
-  $("restoreYes").onclick = async () => { $("restore").hidden = true; restorePending = false; await loadDraft(d); };
-  $("restoreNo").onclick = async () => {
-    $("restore").hidden = true; restorePending = false;
-    try { await idbDo("readwrite", st => st.delete("draft")); } catch (_) {}
-    if (hasContent()) saveDraft();
-  };
+  const rec = await readTab(curTab);
+  if (rec?.doc) await loadDraft(rec);
+  delete tabOf(curTab).fresh;
+  renderTabs(); renderGoals();
+  if (updated) toast("Updated to the latest version. Your sketches are just as you left them.", 4000);
 }
 async function loadDraft(d) {
   if (speech.isRunning()) await stopRec();
@@ -1510,19 +1519,73 @@ async function loadDraft(d) {
   redoStack = []; maskData.clear();
   forgetImages(); await preloadAssets(doc);
   rebuild(); fit(); renderTimeline();
-  $("title").value = doc.title || ""; $("clock").textContent = fmt(speech.now()); $("hint").hidden = true;
+  $("title").value = doc.title || ""; $("clock").textContent = fmt(speech.now()); $("hint").hidden = hasContent();
   dirty = false;
 }
-armed($("new"), "Sure? Tap again", async () => {
-  if (speech.isRunning()) await stopRec();
+async function switchTab(id) {
+  if (id === curTab || !tabOf(id)) return;
+  if (team || teamStarting) return toast("End the team session before switching tabs: everyone is drawing in this one.", 5000);
+  if ($("save").disabled || tabBusy) return;   // halfway through a save, or a build arriving
+  if (speech.isRunning()) { await stopRec(); await sleep(500); }   // the last words can arrive just after
   stopPlayback(); if (editing) commitText(); cancelToolGesture();
-  doc = newDoc(); audioBlobs = new Map(); redoStack = []; activeLayer = "l0"; speech.setClock(0); forgetImages(); maskData.clear();
-  restorePending = false; $("restore").hidden = true;
-  try { await idbDo("readwrite", st => st.delete("draft")); } catch (_) {}
-  rebuild(); fit(); renderTimeline();
-  $("title").value = ""; $("clock").textContent = "00:00"; $("hint").hidden = false; dirty = false;
-  toast("New session started.");
-});
+  clearTimeout(draftTimer); await saveDraft();
+  const rec = await readTab(id);
+  curTab = id; delete tabOf(id).fresh;
+  await loadDraft(rec?.doc ? rec : { doc: newDoc() });
+  saveTabs(); renderTabs(); renderGoals();
+}
+// A new tab goes to the end, or for a review, just after the sketch (and earlier reviews) it belongs to.
+async function newTab(d = newDoc(), { activeLayer: al = "l0", focus = true } = {}) {
+  const t = { id: newTabId() }; tabInfo(t, d);
+  let at = tabs.length;
+  if (t.parent && tabOf(t.parent)) { at = tabs.indexOf(tabOf(t.parent)) + 1; while (at < tabs.length && tabs[at].parent === t.parent) at++; }
+  tabs.splice(at, 0, t);
+  if (!focus) t.fresh = true;
+  try { await idbDo("readwrite", st => { st.put({ doc: d, clock: 0, audio: [], activeLayer: al }, "tab:" + t.id); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
+  if (focus) await switchTab(t.id); else renderTabs();
+  return t.id;
+}
+async function closeTab(id) {
+  if (team && id === curTab) return toast("End the team session before closing its tab.", 5000);
+  if (id === curTab) {
+    const i = tabs.findIndex(t => t.id === id), next = tabs[i + 1] || tabs[i - 1];
+    if (next) await switchTab(next.id); else await newTab();
+    if (curTab === id) return;   // the switch didn't happen
+  }
+  tabs = tabs.filter(t => t.id !== id);
+  for (const t of tabs) if (t.parent === id) t.parent = null;
+  try { await idbDo("readwrite", st => { st.delete("tab:" + id); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
+  renderTabs();
+}
+const STATUS_TEXT = { draft: "Goals to check", building: "Building", built: "Built", review: "To review", changes: "Changes sent", approved: "Approved" };
+function tabLabel(t) { return t.title || (t.kind === "review" ? `Build ${t.round || 1}` : "Untitled sketch"); }
+function renderTabs() {
+  const box = $("tabs"); box.hidden = isGuestPage; if (isGuestPage) return;
+  box.textContent = "";
+  for (const t of tabs) {
+    const b = el("div", { className: "tab" + (t.id === curTab ? " on" : "") + (t.kind === "review" ? " review" : "") + (t.fresh ? " fresh" : ""), role: "tab" });
+    b.setAttribute("aria-selected", String(t.id === curTab));
+    const parent = t.parent && tabOf(t.parent);
+    const go = el("button", { type: "button", className: "tgo", title: parent ? `A build of “${tabLabel(parent)}”` : tabLabel(t) });
+    if (t.kind === "review") go.append(el("span", { className: "tkind", textContent: "↳" }));
+    go.append(el("span", { className: "tname", textContent: tabLabel(t) }));
+    if (STATUS_TEXT[t.status]) go.append(el("span", { className: "tstat s-" + t.status, textContent: STATUS_TEXT[t.status] }));
+    go.onclick = () => switchTab(t.id);
+    const x = el("button", { type: "button", className: "tx", title: "Close this tab", textContent: "×" });
+    let armedAt = 0;
+    x.onclick = e => {
+      e.stopPropagation();
+      if (t.id === curTab && !hasContent() && tabs.length === 1) return;
+      const empty = t.id === curTab ? !hasContent() : false;
+      if (!empty && performance.now() - armedAt > 2500) { armedAt = performance.now(); x.textContent = "Close?"; x.classList.add("armed"); setTimeout(() => { x.textContent = "×"; x.classList.remove("armed"); }, 2500); return; }
+      closeTab(t.id);
+    };
+    b.append(go, x); box.append(b);
+  }
+  const add = el("button", { type: "button", className: "tadd", title: "New sketch in a new tab", textContent: "+ New" });
+  add.onclick = () => newTab();
+  box.append(add);
+}
 window.addEventListener("beforeunload", e => { if (reloading || isGuestPage) return; if (dirty && hasContent()) { saveDraft(); e.preventDefault(); e.returnValue = ""; } });
 
 // When Claude finishes an update, the open window reloads itself and keeps the sketch. It waits while
@@ -1535,14 +1598,14 @@ async function checkForUpdate() {
   try { v = (await (await fetch("/api/version", { cache: "no-store" })).json()).version; } catch (_) { return; }
   if (appVersion === null) { appVersion = v; return; }
   if (v === appVersion) return;
-  const busy = speech.isRunning() || gesture || live || editing || pb || restorePending || !$("pageDlg").hidden || $("save").disabled || !$("teamDlg").hidden || !$("joinDlg").hidden;
+  const busy = speech.isRunning() || gesture || live || editing || pb || !$("pageDlg").hidden || $("save").disabled || !$("teamDlg").hidden || !$("joinDlg").hidden;
   if (busy) {
     if (!updateWaiting) { updateWaiting = true; toast("A new version of SketchCollab is ready. It loads as soon as you finish what you're doing.", 6000); }
     return;
   }
   reloading = true;
   clearTimeout(draftTimer);
-  try { if (hasContent()) await saveDraft(); else await idbDo("readwrite", st => st.delete("draft")); } catch (_) {}
+  await saveDraft();
   try { sessionStorage.setItem(RELOAD_KEY, "1"); } catch (_) {}
   location.reload();
 }
@@ -1593,9 +1656,9 @@ function usedAssets() {
   doc.events.forEach(ev => eventAssets(ev, used));
   return [...used].filter(id => doc.assets[id]);
 }
-async function exportSession(send) {
-  if (!hasContent()) return toast("Draw or say something first.");
-  if (send && !server) return toast("Send to Claude needs the app opened with start.bat (the desktop shortcut).", 7000);
+async function exportSession(send, request = null) {
+  if (!hasContent()) { toast("Draw or say something first."); return false; }
+  if (send && !server) return void toast("Send to Claude needs the app opened with start.bat (the desktop shortcut).", 7000);
   const buttons = [$("save"), $("send")]; buttons.forEach(b => b.disabled = true);
   const label = send ? $("send") : $("save"), old = label.textContent; label.textContent = send ? "Sending…" : "Saving…";
   try {
@@ -1606,7 +1669,7 @@ async function exportSession(send) {
       download(`${name}_storyboard.png`, story.toDataURL("image/png"));
       download(`${name}_transcript.md`, "data:text/markdown;charset=utf-8," + encodeURIComponent(wordsText(doc, state, moments, len, false)));
       toast("Downloaded the storyboard picture and the notes. Attach them in your chat with Claude.", 8000);
-      dirty = false; return;
+      dirty = false; return true;
     }
     const files = [{ path: "transcript.md", text: wordsText(doc, state, moments, len, true) }];
     files.push({ path: "final.png", base64: b64(renderComposite(state, doc)) }, { path: "storyboard.png", base64: b64(story) });
@@ -1619,18 +1682,21 @@ async function exportSession(send) {
     for (const a of doc.audio) { const blob = audioBlobs.get(a.id); if (!blob) continue; const path = `audio/${a.id}.${/mp4/.test(a.type) ? "m4a" : "webm"}`; audio.push({ ...a, file: path }); files.push({ path, base64: await blobB64(blob) }); }
     const meta = { ...doc, assets, audio, length_ms: len, layers: state.layers.map((L, i) => ({ ...L, file: `layers/${pad2(i + 1)}.png`, pieces: state.order[L.id].length })), size: state.size };
     files.push({ path: "session.json", text: JSON.stringify(meta) });
-    const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, files, send: !!send }) });
+    const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, files, send: !!send, request: send ? request || { kind: "sketch", goals: goalsOf().map(g => g.text) } : undefined }) });
     const res = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(res.error || "the save was refused");
     dirty = false;
+    if (send) { doc.sentAs = name; saveDraft(); }
+    if (request) return true;   // the caller says what happened
     toast(send ? "Sent to Claude. If your chat with Claude is open, it picks this up in a few seconds." : `Saved to ${res.folder}.`, 8000);
   } catch (e) {
     toast("Couldn't save: " + e.message + ". Is the SketchCollab window from start.bat still open?", 9000);
+    return false;
   } finally { buttons.forEach(b => b.disabled = false); label.textContent = old; }
 }
 function download(name, href) { const a = el("a", { href, download: name }); document.body.append(a); a.click(); a.remove(); }
 $("save").onclick = () => exportSession(false);
-$("send").onclick = () => exportSession(true);
+$("send").onclick = () => doc.kind === "review" ? sendReview("changes") : exportSession(true);
 $("copyPic").onclick = async () => {
   if (!hasContent()) return toast("Draw or say something first.");
   try {
@@ -1648,7 +1714,243 @@ $("copyWords").onclick = async () => {
   catch (_) { toast("Couldn't copy here. Use Save instead."); }
 };
 
-// ---------------------------------------------------------------- start
+// ---------------------------------------------------------------- goals, builds and reviews
+// The loop: a sketch gets a list of goals (yours, or drafted by Claude from what you said and drew). Build it
+// sends the sketch and the goals to Claude, who has an agent build it. The agent leaves pictures and a goal-by-goal
+// report in the inbox, and they open here as a review tab. You mark each goal, draw and talk over the pictures,
+// then Send back for changes (the next build opens as another tab) or Approve.
+const AGENT_STATUS = { done: "Done", partly: "Partly", "not yet": "Not yet" };
+const gid = () => "g" + Math.random().toString(36).slice(2, 8);
+const goalsOf = () => (doc.goals ||= []);
+function goalsChanged() { changed(); renderGoals(); }
+function renderGoals() {
+  if (document.activeElement?.matches?.("#goalList .gtext, #goalList .gcomment")) { document.activeElement.addEventListener("blur", () => setTimeout(renderGoals, 0), { once: true }); return; }   // you're typing in a goal: wait
+  const box = $("goals"); box.hidden = isGuestPage; if (isGuestPage) return;
+  const review = doc.kind === "review", goals = goalsOf(), st = doc.goalsState;
+  box.classList.toggle("collapsed", !!settings.goalsShut && !review && st !== "draft");
+  $("goalsTitle").textContent = review ? "Check the build" : "Goals for the build";
+  $("goalsCount").textContent = review ? `${goals.filter(g => g.verdict).length} of ${goals.length} checked` : goals.length ? String(goals.length) : "";
+  const note = $("goalsNote"); note.textContent = "";
+  if (review) {
+    const r = doc.review || {};
+    if (r.summary) note.append(el("p", { className: "gsum", textContent: r.summary }));
+    if (r.built?.length) { const ul = el("ul", { className: "gbuilt" }); r.built.forEach(b => ul.append(el("li", { textContent: b }))); note.append(ul); }
+    if (r.notes) note.append(el("p", { className: "gsum muted", textContent: r.notes }));
+    note.append(el("p", { className: "muted", textContent: st === "changes" ? "Sent back for changes. The next build opens in a new tab beside this one." : st === "approved" ? "You approved this build." : "Mark each goal, then draw on the pictures and talk through anything that's off. Your marks go on the “Your notes” layer." }));
+  } else {
+    note.append(el("p", { className: "muted", textContent:
+      st === "draft" ? "Claude drafted these from your sketch. Change, remove or add any, then press Build it."
+      : st === "building" ? "Building now. The results open in a new tab beside this one."
+      : st === "built" ? "A build is back: it's in the tab beside this one."
+      : goals.length ? "Press Build it when the list says what the build must get right."
+      : "List what the build must get right. Or press Send to Claude, and Claude drafts this list from your sketch for you to check." }));
+  }
+  const ol = $("goalList"); ol.textContent = "";
+  goals.forEach((g, i) => {
+    const li = el("li", { className: "goal" + (g.verdict ? " v-" + g.verdict : "") });
+    const txt = el("span", { className: "gtext", textContent: g.text });
+    if (!review) {
+      txt.contentEditable = "true"; txt.spellcheck = true;
+      txt.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); txt.blur(); } };
+      txt.onblur = () => { const t = txt.textContent.trim(); if (!t) goals.splice(i, 1); else g.text = t; goalsChanged(); };
+    }
+    const head = el("div", { className: "ghead" }, el("b", { className: "gnum", textContent: i + 1 + "." }), txt);
+    if (!review) {
+      if (g.from === "claude" && st === "draft") head.append(el("span", { className: "chip", textContent: "Claude" }));
+      const del = el("button", { type: "button", className: "del", title: "Remove this goal", textContent: "×" });
+      del.onclick = () => { goals.splice(i, 1); goalsChanged(); };
+      head.append(del);
+    }
+    li.append(head);
+    if (review) {
+      if (g.agent?.status || g.agent?.note) {
+        const a = el("div", { className: "gagent" });
+        if (g.agent.status) a.append(el("span", { className: "chip a-" + g.agent.status.replace(" ", "-"), textContent: "Agent: " + (AGENT_STATUS[g.agent.status] || g.agent.status) }));
+        if (g.agent.note) a.append(" " + g.agent.note);
+        li.append(a);
+      }
+      const row = el("div", { className: "gverdict" });
+      for (const [v, label] of [["good", "Good"], ["change", "Needs a change"]]) {
+        const b = el("button", { type: "button", className: "vbtn", textContent: label });
+        b.setAttribute("aria-pressed", String(g.verdict === v));
+        b.onclick = () => { g.verdict = g.verdict === v ? null : v; goalsChanged(); if (g.verdict === "change") setTimeout(() => ol.children[i]?.querySelector("input")?.focus(), 0); };
+        row.append(b);
+      }
+      li.append(row);
+      if (g.verdict === "change") {
+        const inp = el("input", { className: "gcomment", placeholder: "What should change? (or just say it and draw it)", value: g.comment || "" });
+        inp.onkeydown = e => e.stopPropagation();
+        inp.oninput = () => { g.comment = inp.value; changed(); };
+        li.append(inp);
+      }
+    }
+    ol.append(li);
+  });
+  $("goalForm").hidden = review;
+  const act = $("goalActions"); act.textContent = "";
+  if (review) {
+    const back = el("button", { type: "button", className: "btn primary", textContent: "Send back for changes" });
+    back.onclick = () => sendReview("changes");
+    const ok = el("button", { type: "button", className: "btn", textContent: "Approve" });
+    ok.onclick = () => sendReview("approved");
+    act.append(back, ok);
+  } else {
+    const b = el("button", { type: "button", className: "btn primary", textContent: st === "building" ? "Build again" : "Build it", disabled: !goals.length });
+    b.title = "Send the sketch and these goals to Claude to build";
+    b.onclick = buildIt;
+    act.append(b);
+  }
+  $("send").textContent = review ? "Send back" : "Send to Claude";
+  $("send").title = review ? "Send your review back to Claude for changes" : "Save and hand it straight to Claude";
+}
+$("goalsHead").onclick = () => { if (doc.kind === "review") return; settings.goalsShut = !settings.goalsShut; saveSettings(); renderGoals(); };
+$("goalForm").onsubmit = e => {
+  e.preventDefault();
+  const t = $("goalInput").value.trim(); if (!t) return;
+  goalsOf().push({ id: gid(), text: t.slice(0, 500), from: "you" }); $("goalInput").value = "";
+  goalsChanged();
+};
+$("goalInput").addEventListener("keydown", e => e.stopPropagation());
+async function buildIt() {
+  const goals = goalsOf().filter(g => g.text.trim());
+  if (!goals.length) return toast("Add at least one goal first.");
+  const ok = await exportSession(true, { kind: "build", goals: goals.map(g => g.text) });
+  if (ok) { doc.goalsState = "building"; goalsChanged(); toast("Sent to Claude to build. The results open in a new tab beside this one.", 8000); }
+}
+async function sendReview(kind) {
+  if (doc.kind !== "review") return;
+  const goals = goalsOf();
+  if (kind === "changes" && !goals.some(g => g.verdict === "change") && !doc.speech.length && !doc.events.some(e => !e.build && e.type !== "point")) {
+    return toast("Mark a goal “Needs a change”, or draw and talk over the pictures, so Claude knows what to fix.", 7000);
+  }
+  const r = doc.review || {};
+  const ok = await exportSession(true, { kind, build_of: r.session, round: r.round || 1, item: r.itemId,
+    goals: goals.map(g => ({ text: g.text, agent: g.agent || null, verdict: g.verdict || null, comment: g.comment || "" })) });
+  if (ok) {
+    doc.goalsState = kind; goalsChanged();
+    toast(kind === "approved" ? "Approved. Claude has been told the build is right." : "Sent back to Claude. The next build opens in a new tab.", 8000);
+  }
+}
+
+// What an agent leaves in the inbox. Checked every few seconds while the app is open on this computer.
+let tabsReady = false, inboxBusy = false;
+const taken = new Set();
+// Only one SketchCollab window takes builds from the inbox, so two open windows don't both make a tab for one.
+let inboxOwner = !navigator.locks;
+navigator.locks?.request("sketchcollab-inbox", lock => { inboxOwner = true; return new Promise(() => {}); });   // held while this window is open
+async function checkInbox() {
+  if (!tabsReady || !inboxOwner || !server?.host || isGuestPage || inboxBusy) return;
+  inboxBusy = true;
+  try {
+    const r = await fetch("/api/inbox", { cache: "no-store" }); if (!r.ok) return;
+    for (const it of (await r.json()).items || []) {
+      if (taken.has(it.id)) continue;
+      taken.add(it.id);
+      try { await takeInboxItem(it.id); } catch (e) { console.warn("inbox item", it.id, e); }
+    }
+  } catch (_) {} finally { inboxBusy = false; }
+}
+setInterval(checkInbox, 3000);
+const inboxDone = id => fetch(`/api/inbox/${encodeURIComponent(id)}/done`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+// Change a tab's saved sketch, whether it's the open one or not.
+async function editTab(t, fn) {
+  if (t.id === curTab) { fn(doc); goalsChanged(); return; }
+  tabBusy = true;   // a switch now would load the old copy
+  try {
+    const rec = await readTab(t.id); if (!rec?.doc) return;
+    fn(rec.doc); tabInfo(t, rec.doc); t.fresh = true;
+    try { await idbDo("readwrite", st => { st.put(rec, "tab:" + t.id); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
+  } finally { tabBusy = false; }
+  renderTabs();
+}
+async function takeInboxItem(id) {
+  if (tabs.some(t => t.item === id)) return inboxDone(id);   // already open
+  const r = await fetch(`/api/inbox/${encodeURIComponent(id)}`, { cache: "no-store" }); if (!r.ok) return;
+  const item = await r.json();
+  const from = tabs.find(t => t.session && t.session === item.session);
+  if (item.kind === "goals") {
+    if (!from) { toast(`Claude drafted goals for a sketch that isn't open any more (${item.session}).`, 6000); return inboxDone(id); }
+    const drafted = (item.goals || []).map(g => String(typeof g === "string" ? g : g?.text || "").trim().slice(0, 500)).filter(Boolean).slice(0, 40);
+    await editTab(from, d => {
+      const mine = (d.goals || []).filter(g => g.from !== "claude"), have = new Set(mine.map(g => g.text.toLowerCase()));
+      d.goals = [...mine, ...drafted.filter(t => !have.has(t.toLowerCase())).map(text => ({ id: gid(), text, from: "claude" }))];
+      d.goalsState = "draft";
+    });
+    toast(`Claude drafted ${drafted.length} goal${drafted.length === 1 ? "" : "s"} for “${tabLabel(from)}”. Check them under Goals, then press Build it.`, 9000);
+    if (from.id === curTab) { settings.goalsShut = false; renderGoals(); }
+    return inboxDone(id);
+  }
+  if (item.kind === "review") {
+    if (!item.images?.length) { toast("A build came back without any pictures, so there's nothing to review yet.", 6000); return inboxDone(id); }
+    const root = from ? (from.kind === "review" && from.parent && tabOf(from.parent) ? tabOf(from.parent) : from) : null;
+    const round = item.round || (root ? tabs.filter(t => t.parent === root.id).length + 1 : 1);
+    const parentGoals = root?.id === curTab ? doc.goals : root ? (await readTab(root.id))?.doc?.goals : null;
+    const { d, notesLayer } = await reviewDoc(item, root, round, parentGoals);
+    if (root) await editTab(root, x => { x.goalsState = "built"; });
+    if (from && from !== root) await editTab(from, x => { x.goalsState = x.goalsState === "approved" ? x.goalsState : "changes"; });
+    const idle = !speech.isRunning() && !gesture && !live && !editing && !pb && !$("save").disabled && !team && !teamStarting && $("teamDlg").hidden;
+    const focus = idle && (curTab === from?.id || curTab === root?.id || !hasContent());
+    await newTab(d, { activeLayer: notesLayer, focus });
+    toast(focus ? `Build ${round} is back. Check each goal on the right, draw on the pictures and talk, then Send back or Approve.`
+      : `Build ${round} of “${root ? tabLabel(root) : item.title || "your sketch"}” is back, in a new tab.`, 9000);
+    return inboxDone(id);
+  }
+  toast("Something arrived in the inbox that this version doesn't understand.", 5000);
+  return inboxDone(id);
+}
+// The review tab: the build's pictures, each with its caption, on a locked layer, and an empty layer above for your marks.
+function wrapLines(text, style, width) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    let line = "";
+    for (const w of para.split(/\s+/)) {
+      const tryLine = line ? line + " " + w : w;
+      if (line && measureText({ ...style, text: tryLine }).w > width) { out.push(line); line = w; } else line = tryLine;
+    }
+    out.push(line);
+  }
+  return out.slice(0, 3).join("\n");
+}
+async function reviewDoc(item, root, round, parentGoals) {
+  const imgs = [];
+  for (const im of item.images.slice(0, 12)) { try { const e = await loadImg(im.data); imgs.push({ ...im, w: e.naturalWidth || 800, h: e.naturalHeight || 600 }); } catch (_) {} }
+  if (!imgs.length) throw new Error("no pictures could be opened");
+  const cols = imgs.length === 1 ? 1 : imgs.length <= 4 ? 2 : 3, rows = Math.ceil(imgs.length / cols);
+  const CW = imgs.length === 1 ? 1600 : 1000, CH = imgs.length === 1 ? 1100 : 720, GAP = 60, CAP = 120, TOP = 130;
+  const W = Math.min(4096, cols * CW + (cols + 1) * GAP), H = Math.min(4096, TOP + rows * (CH + CAP + GAP));
+  const d = newDoc({ w: W, h: H });
+  d.kind = "review";
+  d.title = (item.title || `Build ${round}${root ? " of " + tabLabel(root) : ""}`).slice(0, 40);
+  d.review = { parentTab: root?.id || null, session: item.session || null, round, itemId: item.id, summary: String(item.summary || "").slice(0, 4000),
+    built: (item.built || []).map(String).slice(0, 30), notes: String(item.notes || "").slice(0, 2000) };
+  const agentGoals = (item.goals || []).map(g => typeof g === "string" ? { text: g } : g).filter(g => g?.text);
+  const src = agentGoals.length ? agentGoals : (parentGoals || []).map(g => ({ text: g.text }));
+  d.goals = src.slice(0, 40).map(g => ({ id: gid(), text: String(g.text).slice(0, 500), agent: g.status || g.note ? { status: String(g.status || "").toLowerCase(), note: String(g.note || "").slice(0, 600) } : null, verdict: null, comment: "" }));
+  d.goalsState = "review";
+  const ink = "#1f2430", pieces = [], base = { tf: [...I], clips: [], masks: [], erasers: [], layer: "l0" };
+  const title = { kind: "text", font: "display", size: 56, bold: true, italic: false, color: ink, text: `Build ${round}${root ? ` of “${tabLabel(root)}”` : ""}` };
+  pieces.push({ ...title, ...measureText(title), x: GAP, y: 40, id: newId(d), ...base });
+  imgs.forEach((im, i) => {
+    const c = i % cols, r = Math.floor(i / cols), x0 = GAP + c * (CW + GAP), y0 = TOP + r * (CH + CAP + GAP);
+    const k = Math.min(CW / im.w, CH / im.h), w = im.w * k, h = im.h * k;
+    const asset = newId(d, "a"); d.assets[asset] = im.data;
+    pieces.push({ kind: "image", source: "build", name: (im.caption || im.name || "Picture").slice(0, 40), asset, x: 0, y: 0, w, h, ...base, tf: translate(x0 + (CW - w) / 2, y0 + (CH - h) / 2), id: newId(d) });
+    if (im.caption) {
+      const s = { kind: "text", font: "sans", size: 30, bold: false, italic: false, color: ink };
+      const text = `${i + 1}. ${wrapLines(im.caption, s, CW - 50)}`, cap = { ...s, text };
+      pieces.push({ ...cap, ...measureText(cap), x: x0, y: y0 + CH + 16, id: newId(d), ...base });
+    }
+  });
+  const notesLayer = newId(d, "l");
+  d.events.push(
+    { type: "layer", op: "rename", id: "l0", name: "What was built", t0: 0, build: true },
+    { type: "addMany", pieces, t0: 0, build: true },
+    { type: "layer", op: "lock", id: "l0", value: true, t0: 0, build: true },
+    { type: "layer", op: "add", id: notesLayer, name: "Your notes", above: "l0", t0: 0, build: true },
+  );
+  return { d, notesLayer };
+}
+
 // ---------------------------------------------------------------- team sessions
 // The host's app (on this computer) starts a session; guests open the secure link. Everything anyone draws
 // or says goes to the host's server, which puts it in order and passes it on to everyone.
@@ -1818,9 +2120,9 @@ function renderPeople() {
 }
 // Guests can't save, send or start over: that's the host's job.
 function applyRoleUI() {
-  for (const id of ["save", "send", "new"]) $(id).hidden = isGuestPage;
-  if (team) $("new").hidden = true;   // starting over mid-session would muddle everyone's drawing
-  if (isGuestPage) { $("invite").hidden = !team; $("restore").hidden = true; }
+  for (const id of ["save", "send"]) $(id).hidden = isGuestPage;
+  if (isGuestPage) $("invite").hidden = !team;
+  $("tabs").classList.toggle("locked", !!team);   // the team draws in this tab, so the others wait
 }
 function renderTeamDlg() {
   if ($("teamDlg").hidden) return;
@@ -1863,7 +2165,7 @@ $("teamDlg").addEventListener("keydown", e => { e.stopPropagation(); if (e.key =
 $("teamGo").onclick = async () => {
   const name = $("hostName").value.trim() || "Host", go = $("teamGo");
   settings.myName = name; saveSettings();
-  go.disabled = true; go.textContent = "Making the secure link…"; $("teamErr").hidden = true;
+  go.disabled = true; go.textContent = "Making the secure link…"; $("teamErr").hidden = true; teamStarting = true;
   try {
     if (speech.isRunning()) await stopRec();
     // Everything so far gets an id (carrying the host's tag), so it can be shared and undone.
@@ -1879,7 +2181,7 @@ $("teamGo").onclick = async () => {
     renderTeamDlg();
   } catch (e) {
     $("teamErr").textContent = `Couldn't start the team session: ${e.message}`; $("teamErr").hidden = false;
-  } finally { go.disabled = false; go.textContent = "Start team session"; }
+  } finally { go.disabled = false; go.textContent = "Start team session"; teamStarting = false; }
 };
 $("copyInvite").onclick = async () => {
   const text = `Join my SketchCollab session: ${team?.url}\nJoin code: ${team?.code}\n(Open it in Chrome or Edge and allow the microphone.)`;
@@ -1921,7 +2223,7 @@ buildToolbar(); applyTheme();
 document.querySelectorAll(".tool[data-tool]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === settings.tool)));
 setMic(speech.hasSpeech ? "off" : "none");
 rebuild(); renderTimeline(); updateCursor(); checkServer(); applyRoleUI();
-if (isGuestPage) resumeTeam(); else offerRestore().then(resumeTeam);
+if (isGuestPage) { renderTabs(); renderGoals(); resumeTeam(); } else openTabs().then(() => { tabsReady = true; resumeTeam(); checkInbox(); });
 document.fonts?.ready.then(() => { redrawAll(); });
 
 // For testing from the browser console.

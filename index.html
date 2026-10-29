@@ -135,6 +135,7 @@ button { cursor: pointer; }
 .said { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
 .pill.live { background: var(--rec); border-color: var(--rec); color: #fff; }
+.pill:empty { display: none; }
 .pill.warn { background: #ffe8a3; border-color: #e7c55a; color: #4a3800; }
 .timeline { list-style: none; margin: 0; padding: 0 8px 8px 12px; overflow-y: auto; flex: 1; min-height: 0; }
 .timeline li { display: grid; grid-template-columns: 30px 44px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 7px 0; border-bottom: 1px dashed var(--line); }
@@ -157,6 +158,58 @@ button { cursor: pointer; }
 .note { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .note input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface-2); }
 .savehint { padding: 0 12px 10px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* tabs */
+.tabs { display: flex; align-items: flex-end; gap: 2px; padding: 6px 10px 0; background: var(--bg); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; flex: none; }
+.tab { display: flex; align-items: center; max-width: 260px; flex: none; border: 1px solid var(--line); border-bottom: 0; border-radius: 9px 9px 0 0; background: var(--surface-2); position: relative; top: 1px; }
+.tab.on { background: var(--surface); border-color: var(--line); z-index: 1; padding-bottom: 1px; }
+.tab.review { border-top: 3px solid var(--glow); }
+.tab.fresh .tname::after { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rec); margin-left: 6px; vertical-align: middle; }
+.tgo { border: 0; background: transparent; display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 11px; min-width: 0; font-weight: 700; color: var(--muted); }
+.tab.on .tgo { color: var(--fg); }
+.tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tkind { color: var(--muted); font-weight: 400; }
+.tstat { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--fg); white-space: nowrap; }
+.tstat.s-draft, .tstat.s-review { background: color-mix(in srgb, var(--glow) 45%, var(--surface)); }
+.tstat.s-approved { background: color-mix(in srgb, #2e9e5b 30%, var(--surface)); }
+.tx { border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 2px 7px; margin-right: 4px; font-size: 15px; line-height: 1; white-space: nowrap; }
+.tx:hover { background: var(--bg); color: var(--rec); }
+.tx.armed { font-size: 12px; font-weight: 700; padding: 3px 7px; }
+.tadd { border: 0; background: transparent; color: var(--muted); font-weight: 700; padding: 6px 10px; border-radius: 8px 8px 0 0; white-space: nowrap; flex: none; }
+.tadd:hover { color: var(--accent); background: var(--surface-2); }
+.tabs.locked .tab:not(.on), .tabs.locked .tadd { opacity: .45; }
+
+/* goals */
+.goals { display: flex; flex-direction: column; border-bottom: 1px solid var(--line); max-height: 52%; min-height: 0; flex: none; }
+.goals .phead { cursor: pointer; justify-content: flex-start; }
+.goals .phead h2 { flex: 1; }
+.chev { color: var(--muted); transition: transform .15s; }
+.goals.collapsed .chev { transform: rotate(-90deg); }
+.goals.collapsed .gbody { display: none; }
+.gbody { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.gnote { padding: 0 12px; }
+.gnote p { margin: 0 0 8px; }
+.gnote .muted { color: var(--muted); font-size: 13px; }
+.gsum { white-space: pre-wrap; }
+.gbuilt { margin: 0 0 8px; padding-left: 18px; font-size: 13px; }
+.glist { list-style: none; margin: 0; padding: 0 8px 0 12px; }
+.goal { padding: 6px 0; border-bottom: 1px dashed var(--line); display: grid; gap: 5px; }
+.ghead { display: flex; align-items: flex-start; gap: 6px; }
+.gnum { color: var(--muted); min-width: 18px; padding-top: 2px; }
+.gtext { flex: 1; min-width: 0; outline: none; border-radius: 4px; padding: 2px 3px; overflow-wrap: anywhere; }
+.gtext[contenteditable="true"]:hover { background: var(--surface-2); }
+.gtext:focus { background: var(--surface-2); box-shadow: 0 0 0 2px var(--accent); }
+.gagent { font-size: 13px; color: var(--muted); padding-left: 24px; }
+.chip.a-done { background: color-mix(in srgb, #2e9e5b 25%, var(--surface)); color: var(--fg); }
+.chip.a-partly { background: color-mix(in srgb, var(--glow) 35%, var(--surface)); color: var(--fg); }
+.chip.a-not-yet { background: color-mix(in srgb, var(--rec) 22%, var(--surface)); color: var(--fg); }
+.gverdict { display: flex; gap: 6px; padding-left: 24px; }
+.vbtn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 3px 10px; font-size: 13px; font-weight: 700; }
+.goal .vbtn[aria-pressed="true"]:first-child { background: #2e9e5b; border-color: #2e9e5b; color: #fff; }
+.goal .vbtn[aria-pressed="true"]:last-child { background: var(--rec); border-color: var(--rec); color: #fff; }
+.gcomment { margin-left: 24px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: var(--surface-2); min-width: 0; }
+.gactions { display: flex; gap: 8px; padding: 8px 12px 12px; flex-wrap: wrap; }
+.goals .note { border-top: 0; padding-top: 8px; }
 
 /* dialog */
 .scrim { position: fixed; inset: 0; background: rgb(0 0 0 / .4); display: grid; place-items: center; z-index: 30; padding: 16px; }
@@ -222,9 +275,9 @@ button { cursor: pointer; }
   <button class="btn" id="copyWords" title="Copy what you said and drew, as text">Copy words</button>
   <button class="btn" id="save" title="Save the session into the sessions folder">Save</button>
   <button class="btn primary" id="send" title="Save and hand it straight to Claude">Send to Claude</button>
-  <button class="btn" id="new" title="Start a new, empty session">New</button>
   <button class="btn" id="theme" title="Switch between automatic, light and dark">Auto</button>
 </header>
+<nav class="tabs" id="tabs" role="tablist" aria-label="Open sketches"></nav>
 
 <div class="work">
   <aside class="left">
@@ -256,15 +309,19 @@ button { cursor: pointer; }
         <button id="zoomIn" title="Zoom in (Ctrl +)">+</button>
         <button id="zoomFit" title="Fit the drawing in the window (Ctrl 0)">Fit</button>
       </div>
-      <div class="banner" id="restore" hidden>
-        <p id="restoreText">You have an unsaved sketch from last time.</p>
-        <button class="btn primary" id="restoreYes">Pick it up</button>
-        <button class="btn" id="restoreNo">Start fresh</button>
-      </div>
     </div>
   </section>
 
   <aside class="side">
+    <section class="goals" id="goals">
+      <div class="phead" id="goalsHead"><h2 id="goalsTitle">Goals for the build</h2><span class="pill" id="goalsCount"></span><span class="chev" aria-hidden="true">▾</span></div>
+      <div class="gbody">
+        <div class="gnote" id="goalsNote"></div>
+        <ol class="glist" id="goalList"></ol>
+        <form id="goalForm" class="note"><input id="goalInput" placeholder="Add a goal: what must the build get right?" maxlength="500" autocomplete="off"><button class="btn" type="submit">Add</button></form>
+        <div class="gactions" id="goalActions"></div>
+      </div>
+    </section>
     <section class="said">
       <div class="phead"><h2>What you said</h2>
         <div class="icons"><span id="mic" class="pill">Mic off</span><button class="ib toggle" id="keepPlaying" type="button" aria-pressed="false" aria-label="Keep playing"><svg viewBox="0 0 24 24"><path d="M4 6l7 6-7 6zM13 6l7 6-7 6z" fill="currentColor" stroke="none"/></svg></button><button class="ib" id="playAll" title="Play back the whole session"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg></button></div>
@@ -317,7 +374,7 @@ button { cursor: pointer; }
     <h3 id="joinTitle">Join a SketchCollab session</h3>
     <p class="muted">Sketch and talk an idea out together. Use Chrome or Edge, and allow the microphone when asked.</p>
     <label class="field">Your name <input id="joinName" maxlength="30" autocomplete="name" required></label>
-    <label class="field">Join code <input id="joinCode" inputmode="numeric" maxlength="6" autocomplete="off" required></label>
+    <label class="field">Join code <input id="joinCode" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
     <p class="err" id="joinErr" hidden></p>
     <div class="actions"><button type="submit" class="btn primary" id="joinGo">Join</button></div>
   </form>

@@ -36,6 +36,9 @@ from urllib.parse import parse_qs, urlsplit
 PORT = 8765
 ROOT = Path(__file__).resolve().parent
 SESSIONS = ROOT / "sessions"
+INBOX = ROOT / "inbox"                 # where agents leave results and goal drafts for the app to pick up
+REQUEST_KINDS = ("sketch", "build", "changes", "approved")
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 CLOUDFLARED = ROOT / "tools" / "cloudflared.exe"
 LOCAL_HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
 ALLOWED_ORIGINS = {f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
@@ -510,6 +513,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, {"version": max((f.stat().st_mtime_ns for f in files if f.exists()), default=0)})
         if path == "/api/team/ws":
             return self.websocket((q.get("token") or [""])[0])
+        if path == "/api/inbox":
+            if not self.is_host():
+                return self._reply(403, {"error": "host only"})
+            return self._reply(200, {"items": inbox_list()})
+        if path.startswith("/api/inbox/"):
+            if not self.is_host():
+                return self._reply(403, {"error": "host only"})
+            item = inbox_item(path.rsplit("/", 1)[1])
+            return self._reply(200, item) if item else self._reply(404, {"error": "not found"})
         if path.startswith("/api/team/audio/"):
             room = ROOM
             member = room and room.by_token((q.get("token") or [""])[0])
@@ -582,6 +594,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(200, {"ok": bool(m), "code": room.code})
             if path == "/api/team/join":
                 return self.join()
+            if path.startswith("/api/inbox/") and path.endswith("/done"):
+                if not self.host_post_ok():
+                    return self._reply(403, {"error": "host only"})
+                return self._reply(200, {"ok": inbox_done(path.split("/")[3])})
             if path == "/api/team/audio":
                 return self.audio_upload()
         except (KeyError, ValueError, TypeError) as e:
@@ -716,14 +732,71 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     target.write_text(f["text"], encoding="utf-8")
             if data.get("send"):
+                # What's being asked: "sketch" (a new idea), "build" (goals confirmed, build it),
+                # "changes" (a review with things to fix) or "approved" (the build is right).
+                req = data.get("request") if isinstance(data.get("request"), dict) else {}
+                kind = req.get("kind") if req.get("kind") in REQUEST_KINDS else "sketch"
                 stamp = datetime.now().isoformat(timespec="seconds")
-                (folder / "SENT_TO_CLAUDE.txt").write_text(f"Sent {stamp}\n", encoding="utf-8")
+                (folder / "request.json").write_text(json.dumps({**req, "kind": kind, "session": name, "sent": stamp}, indent=2), encoding="utf-8")
+                (folder / "SENT_TO_CLAUDE.txt").write_text(f"Sent {stamp} ({kind})\n", encoding="utf-8")
                 with SENT_LOG.open("a", encoding="utf-8") as log:
-                    log.write(f"{stamp} {name}\n")
+                    log.write(f"{stamp} {name} {kind}\n")
         except OSError as e:
             return self._reply(500, {"error": f"couldn't write the files ({e.strerror or e})"})
         print(f"  {'Sent' if data.get('send') else 'Saved'} session to {folder}")
         return self._reply(200, {"ok": True, "folder": str(folder), "sent": bool(data.get("send"))})
+
+
+# ---------------------------------------------------------------- the agent inbox
+# An agent leaves a folder in inbox/ with an item.json (and any pictures it names). The app picks it up:
+# "goals" items ask Paddy to confirm a goal list; "review" items open as a review tab.
+def _item_dirs():
+    if not INBOX.is_dir():
+        return []
+    return [d for d in sorted(INBOX.iterdir()) if d.is_dir() and not d.name.startswith("_") and NAME_RE.match(d.name) and (d / "item.json").is_file()]
+
+
+def inbox_list():
+    out = []
+    for d in _item_dirs():
+        try:
+            item = json.loads((d / "item.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out.append({"id": d.name, "kind": item.get("kind"), "title": item.get("title", ""), "session": item.get("session", ""),
+                    "created": int((d / "item.json").stat().st_mtime * 1000)})
+    return out
+
+
+def inbox_item(item_id):
+    d = INBOX / item_id
+    if not NAME_RE.match(item_id) or not (d / "item.json").is_file():
+        return None
+    try:
+        item = json.loads((d / "item.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    images = []
+    for img in item.get("images") or []:
+        f = d / str(img.get("file", ""))
+        if f.parent != d or f.suffix.lower() not in IMAGE_TYPES or not f.is_file():
+            continue   # only pictures inside the item's own folder
+        images.append({"caption": str(img.get("caption", ""))[:300], "name": f.name,
+                       "data": f"data:{IMAGE_TYPES[f.suffix.lower()]};base64,{base64.b64encode(f.read_bytes()).decode()}"})
+    item["images"], item["id"] = images, item_id
+    return item
+
+
+def inbox_done(item_id):
+    d = INBOX / item_id
+    if not NAME_RE.match(item_id) or item_id.startswith("_") or not d.is_dir():
+        return False
+    try:
+        (INBOX / "_done").mkdir(exist_ok=True)
+        d.rename(INBOX / "_done" / f"{item_id}-{time.time_ns()}")
+    except OSError:
+        return False   # already moved, or in use: the app skips items it has already opened
+    return True
 
 
 class Server(ThreadingHTTPServer):
@@ -732,6 +805,7 @@ class Server(ThreadingHTTPServer):
 
 def main():
     SESSIONS.mkdir(exist_ok=True)
+    INBOX.mkdir(exist_ok=True)
     try:
         server = Server(("127.0.0.1", PORT), Handler)
     except OSError:

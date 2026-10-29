@@ -6,7 +6,8 @@ import { replay, docBox, touchedIds } from "./doc.js";
 import { renderComposite, renderPiece, drawPointing, BRUSHES } from "./render.js";
 
 // Layer housekeeping (hide, lock, rename, opacity, reorder) isn't part of the story.
-const isAction = ev => ev.type !== "layer" || ev.op === "add" || ev.op === "delete";
+// The pictures a review tab starts with are what the agent built, not something done in the session.
+const isAction = ev => !ev.build && (ev.type !== "layer" || ev.op === "add" || ev.op === "delete");
 const t0 = ev => ev.t0 ?? 0, t1 = ev => ev.t1 ?? ev.t0 ?? 0;
 
 // People usually say a thing and draw it a second or two later, so words go to the burst that is
@@ -196,6 +197,7 @@ export function wordsText(doc, state, moments, lengthMs, files) {
     L.push("![Final drawing](final.png)", "", "Every moment on one page: storyboard.png. Each layer on its own: layers/.", "");
     if (doc.audio.length) L.push("Voice recordings of the session are in audio/ (times in session.json).", "");
   } else L.push("");
+  goalsText(doc, L);
   L.push("## Layers", "");
   [...state.layers].reverse().forEach((l, i) => L.push(`- ${l.name}${l.visible ? "" : " (hidden)"}${l.opacity < 1 ? ` (${Math.round(l.opacity * 100)}% opacity)` : ""}: ${state.order[l.id].length} piece${state.order[l.id].length === 1 ? "" : "s"}${files ? `, layers/${String(state.layers.length - i).padStart(2, "0")}.png` : ""}`));
   L.push("", "## Moments", "");
@@ -212,4 +214,33 @@ export function wordsText(doc, state, moments, lengthMs, files) {
   moments.forEach((m, i) => { if (m.evs.length) { const { before, after } = momentStates(doc, m); lines.push({ t: m.start, line: `drawing: ${describe(m, doc, before, after)} (moment ${i + 1})` }); } });
   lines.sort((a, b) => a.t - b.t).forEach(e => L.push(`- \`${fmt(e.t)}\` ${e.line}`));
   return L.join("\n");
+}
+
+// The goals for the build, or in a review tab, the agent's report and what was decided about each goal.
+const AGENT = { done: "done", partly: "partly done", "not yet": "not done yet" };
+function goalsText(doc, L) {
+  const goals = doc.goals || [];
+  if (doc.kind === "review") {
+    const r = doc.review || {};
+    L.push(`## Review of build ${r.round || 1}${r.session ? ` (a build of session ${r.session})` : ""}`, "");
+    L.push("The layer “What was built” holds the agent's pictures of the build. Anything drawn on “Your notes” and everything said is the review: marks on a picture point at what to change there.", "");
+    if (r.summary) L.push("**The agent's summary:** " + r.summary, "");
+    if (r.built?.length) { L.push("**Built:**"); r.built.forEach(b => L.push(`- ${b}`)); L.push(""); }
+    if (goals.length) {
+      L.push("### Goal by goal", "");
+      goals.forEach((g, i) => {
+        const parts = [];
+        if (g.agent?.status) parts.push(`agent says ${AGENT[g.agent.status] || g.agent.status}${g.agent.note ? ` (${g.agent.note})` : ""}`);
+        parts.push(g.verdict === "good" ? "**reviewer: good**" : g.verdict === "change" ? `**reviewer: needs a change**${g.comment ? `: “${g.comment}”` : ""}` : "reviewer: not marked");
+        L.push(`${i + 1}. ${g.text} · ${parts.join(" · ")}`);
+      });
+      L.push("");
+    }
+    if (doc.goalsState === "approved") L.push("**The reviewer approved this build.**", "");
+    return;
+  }
+  if (!goals.length) return;
+  L.push(doc.goalsState === "draft" ? "## Goals for the build (drafted, not yet confirmed)" : "## Goals for the build", "");
+  goals.forEach((g, i) => L.push(`${i + 1}. ${g.text}`));
+  L.push("");
 }

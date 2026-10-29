@@ -6,6 +6,6 @@ while ($true) {
   Start-Sleep -Seconds 2
   if (Test-Path $log) {
     $lines = @(Get-Content $log)
-    if ($lines.Count -gt $start) { "NEW SKETCH SESSION SENT: " + $lines[-1]; break }
+    if ($lines.Count -gt $start) { "NEW SKETCH SESSION SENT: " + $lines[-1] + "  (the last word is the request: sketch, build, changes or approved; see AGENT_LOOP.md)"; break }
   }
 }
