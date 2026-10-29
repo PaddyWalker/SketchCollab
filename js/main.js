@@ -25,7 +25,7 @@ const SETTINGS_KEY = "sketchtalk.settings.v2";   // storage names kept from when
 const defaults = {
   tool: "brush", brush: "pen", brushes: JSON.parse(JSON.stringify(BRUSHES)), primary: "#1f2430", secondary: "#ffffff",
   eraserSize: 30, shape: "rect", shapeWidth: 6, shapeFill: false, font: "sans", fontSize: 48, bold: false, italic: false,
-  bucketTol: 32, bucketAll: true, gradType: "linear", wandTol: 40, marquee: "rect", theme: "auto",
+  bucketTol: 32, bucketAll: true, gradType: "linear", wandTol: 40, marquee: "rect", theme: "auto", keepPlaying: false,
 };
 const settings = loadSettings();
 function loadSettings() {
@@ -1163,17 +1163,31 @@ $("noteForm").onsubmit = e => {
 $("title").oninput = () => { doc.title = $("title").value; changed(); };
 
 // ---------------------------------------------------------------- playback
+// Play starts at the line you pressed (the drawing so far is already shown). It stops when that line's
+// drawing is done and before the next line's words, or with "Keep playing" on, it carries on to the end.
+const sessionEnd = () => Math.max(speech.now(), ...doc.events.map(e => e.t1 ?? e.t0 ?? 0), ...doc.speech.map(s => s.t1));
 function playSeg(seg) {
+  const from = Math.max(0, seg.t0 - 300);
+  if (settings.keepPlaying) return playRange(from, sessionEnd() + 500);
   const m = buildMoments(doc).find(m => m.segs.includes(seg));
-  const from = Math.max(0, Math.min(seg.t0, m ? m.start : seg.t0) - 400);
-  const to = Math.max(seg.t1, m ? m.end : 0, ...(m ? m.segs.map(s => s.t1) : [])) + 500;
+  let to = Math.max(seg.t1, m && m.evs.length ? m.end : 0) + 400;
+  const next = doc.speech.find(s => s.t0 > seg.t0);
+  // A line's end time can run late (speech-to-text finishes it after the next one starts), so the next line's start wins.
+  if (next) to = Math.min(to, Math.max(from + 1500, next.t0 - 150));
   playRange(from, to);
 }
 $("playAll").onclick = () => {
-  const end = Math.max(speech.now(), ...doc.events.map(e => e.t1 ?? e.t0 ?? 0), ...doc.speech.map(s => s.t1));
+  const end = sessionEnd();
   if (end <= 0) return toast("Nothing to play yet. Press Start talking, then draw.");
   playRange(0, end + 500);
 };
+function paintKeepPlaying() {
+  const b = $("keepPlaying");
+  b.setAttribute("aria-pressed", String(!!settings.keepPlaying));
+  b.title = settings.keepPlaying ? "Keep playing is on: ▶ on a line plays from there to the end. Click to turn off." : "Keep playing is off: ▶ on a line plays just that line. Click to play on from there to the end.";
+}
+$("keepPlaying").onclick = () => { settings.keepPlaying = !settings.keepPlaying; saveSettings(); paintKeepPlaying(); toast(settings.keepPlaying ? "Keep playing on: ▶ plays from that line to the end." : "Keep playing off: ▶ plays just that line.", 2500); };
+paintKeepPlaying();
 function playRange(from, to) {
   stopPlayback();
   if (speech.isRunning()) { toast("Stop talking first, then play it back."); return; }

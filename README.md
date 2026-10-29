@@ -59,7 +59,8 @@ to draw on it, and double-click to rename it. The active layer has an opacity sl
 
 1. Press **Start talking** (or R) and explain while you draw. Your words show up on the right.
 2. A word wrong? Click the line and fix it. You can also type notes (Win+H dictates into the note box).
-3. Press ▶ on any line to see and hear that part again.
+3. Press ▶ on any line to see and hear that part again. It starts at that line and stops before the next.
+   Turn on **Keep playing** (the ⏩ button next to the mic) to play on from that line to the end instead.
 
 ## Save, or Send to Claude
 
