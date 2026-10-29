@@ -2,7 +2,8 @@
 
 import { $, I, mul, applyM, inv, translate, scaleAbout, scaleOf, makeCanvas, boxOfPoints, unionBox, padBox, interBox, boxesTouch, transformBox, pointInPoly, ellipsePoly, fmt, hexToRgb, rgbToHex, sleep, clamp } from "./util.js";
 import { newDoc, newId, initialState, apply, replay, docBox, hitTest, samplePoints, toLocal } from "./doc.js";
-import { BRUSHES, FONTS, fontCss, paperColor, getImage, preloadAssets, forgetImages, setImageReadyHandler, renderPiece, renderLayer, renderComposite, drawGrid, drawStrokePts, drawEraserPts, drawShape, drawPointing, measureText } from "./render.js";
+import { BRUSHES, FONTS, fontCss, paperColor, getImage, preloadAssets, forgetImages, setImageReadyHandler, renderPiece, renderLayer, renderComposite, drawGrid, drawEraserPts, drawShape, drawPointing, measureText } from "./render.js";
+import { OneEuro, SpeedPressure, drawInk, tidy, detectShape, shapePoints } from "./ink.js";
 import * as speech from "./speech.js";
 import { buildMoments, momentCanvas, storyboardCanvas, wordsText, momentText } from "./moments.js";
 
@@ -26,6 +27,7 @@ const defaults = {
   tool: "brush", brush: "pen", brushes: JSON.parse(JSON.stringify(BRUSHES)), primary: "#1f2430", secondary: "#ffffff",
   eraserSize: 30, shape: "rect", shapeWidth: 6, shapeFill: false, font: "sans", fontSize: 48, bold: false, italic: false,
   bucketTol: 32, bucketAll: true, gradType: "linear", wandTol: 40, marquee: "rect", theme: "auto", keepPlaying: false,
+  help: "light", feel: "normal", penSeen: false,   // Drawing help level; pen pressure feel (shown once a pen is used)
 };
 const settings = loadSettings();
 function loadSettings() {
@@ -33,7 +35,7 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (s) {
       const brushes = {};
-      for (const k in defaults.brushes) brushes[k] = { ...defaults.brushes[k], ...(s.brushes?.[k] || {}), mode: defaults.brushes[k].mode, label: defaults.brushes[k].label, blend: defaults.brushes[k].blend };
+      for (const k in defaults.brushes) brushes[k] = { ...defaults.brushes[k], ...(s.brushes?.[k] || {}), mode: defaults.brushes[k].mode, label: defaults.brushes[k].label, blend: defaults.brushes[k].blend, taper: defaults.brushes[k].taper, thin: defaults.brushes[k].thin };
       return { ...defaults, ...s, brushes, brush: defaults.brushes[s.brush] ? s.brush : defaults.brush };
     }
   } catch (_) {}
@@ -59,7 +61,7 @@ const layerOf = id => state.layers.find(l => l.id === id);
 const pad2 = n => String(n).padStart(2, "0");
 
 // ---------------------------------------------------------------- view
-const vp = $("viewport"), view = $("view"), vctx = view.getContext("2d");
+const vp = $("viewport"), view = $("view"), vctx = view.getContext("2d", { desynchronized: true });   // asks for a low-latency canvas (a hint)
 const V = { z: 1, x: 0, y: 0, w: 1, h: 1, dpr: 1, fitted: false };
 function resizeView() {
   const r = vp.getBoundingClientRect();
@@ -90,13 +92,31 @@ function toDoc(cx, cy) { const r = vp.getBoundingClientRect(); return [(cx - r.l
 const toScreen = (x, y) => [x * V.z + V.x, y * V.z + V.y];
 $("zoomIn").onclick = () => zoomAt(1.25); $("zoomOut").onclick = () => zoomAt(0.8); $("zoomFit").onclick = fit;
 
-let raf = 0;
-function requestRender() { if (!raf) raf = requestAnimationFrame(draw); }
+// While you draw, only the area around the line (and the brush circle) is redrawn each frame.
+let raf = 0, fullFrame = true, liveDirty = false, lastCursorBox = null;
+function requestRender() { fullFrame = true; if (!raf) raf = requestAnimationFrame(draw); }
+function requestLive() { liveDirty = true; if (!raf) raf = requestAnimationFrame(draw); }
+function cursorBox() {
+  if (!hoverPos || pb || spaceDown || (settings.tool !== "brush" && settings.tool !== "eraser")) return null;
+  const r = (settings.tool === "eraser" ? settings.eraserSize : settings.brushes[settings.brush].size) / 2 + 3 / V.z;
+  return { x0: hoverPos[0] - r, y0: hoverPos[1] - r, x1: hoverPos[0] + r, y1: hoverPos[1] + r };
+}
 function draw() {
   raf = 0;
   if (Math.abs(vp.clientWidth - V.w) > 1 || Math.abs(vp.clientHeight - V.h) > 1) { resizeView(); return; }   // a missed resize
+  let clip = null;
+  if (liveDirty) { liveDirty = false; const box = live ? renderLive() : null; if (!fullFrame) clip = box; }
+  if (!fullFrame && !clip) return;
+  const cb = cursorBox();
+  if (clip) clip = unionBox(clip, unionBox(cb, lastCursorBox));
+  lastCursorBox = cb; fullFrame = false;
   const c = vctx, d = V.dpr, { w, h } = state.size;
-  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, view.width, view.height);
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  if (clip) {
+    const x0 = Math.floor((clip.x0 * V.z + V.x) * d) - 2, y0 = Math.floor((clip.y0 * V.z + V.y) * d) - 2;
+    const x1 = Math.ceil((clip.x1 * V.z + V.x) * d) + 2, y1 = Math.ceil((clip.y1 * V.z + V.y) * d) + 2;
+    c.save(); c.beginPath(); c.rect(x0, y0, x1 - x0, y1 - y0); c.clip(); c.clearRect(x0, y0, x1 - x0, y1 - y0);
+  } else c.clearRect(0, 0, view.width, view.height);
   c.setTransform(d * V.z, 0, 0, d * V.z, d * V.x, d * V.y);
   c.save(); c.shadowColor = "rgba(0,0,0,.28)"; c.shadowBlur = 18; c.shadowOffsetY = 3;
   c.fillStyle = paperColor(doc); c.fillRect(0, 0, w, h); c.restore();
@@ -121,6 +141,7 @@ function draw() {
   }
   c.restore();
   drawOverlay(c);
+  if (clip) c.restore();
 }
 
 // ---------------------------------------------------------------- layers on screen
@@ -268,34 +289,108 @@ function drop(m, t0) {
 }
 
 // ---------------------------------------------------------------- live strokes
+// Smoothing runs on screen pixels, so it feels the same at any zoom. Points are stored in drawing units as
+// [x, y, pressure, session time, ms since the line started].
+const r1 = v => Math.round(v * 10) / 10;
+const HOLD_MS = 550, HOLD_STILL = 3, HOLD_ESCAPE = 12;   // hold still this long (screen px) to snap; move this far to undo it
 function startLive(props, c) {
+  stopLive();
   ensureLayerCanvases();
   const x = liveCanvas.getContext("2d"); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-  live = { layer: activeLayer, props, pts: [[r1(c.x), r1(c.y), c.pressure, c.t]], sm: [c.x, c.y], carry: { left: 0 }, drawn: 0 };
-  liveDraw(true);
+  live = {
+    layer: activeLayer, props, pts: [], filter: new OneEuro(props.smoothing), speed: new SpeedPressure(),
+    ts0: c.ts, lastTs: c.ts, handled: performance.now(), raw: { sx: c.sx, sy: c.sy, pr: c.pressure, t: c.t }, lastS: null, predicted: [],
+    anchor: { sx: c.sx, sy: c.sy, ms: performance.now() }, screenLen: 0, held: null, lastBox: null,
+  };
+  pushInk(c.sx, c.sy, c.pressure, c.ts, c.t);
+  requestLive(); requestAnimationFrame(liveLoop);
+  live.timer = setInterval(liveTick, 50);   // also checks for a hold when frames are slow
 }
-const r1 = v => Math.round(v * 10) / 10;
+function pushInk(sx, sy, pr, ts, t) {
+  const L = live;
+  ts = Math.max(ts, L.pushTs ?? ts); L.pushTs = ts;   // the filters need time to only move forward
+  const f = L.filter.next(sx, sy, ts);
+  const p = L.props.pen ? pr : L.props.thin && L.props.pressureSize ? L.speed.next(sx, sy, ts) : 0.5;
+  if (L.lastS && Math.hypot(f.x - L.lastS.x, f.y - L.lastS.y) < 0.5) return false;
+  L.lastS = { x: f.x, y: f.y };
+  L.pts.push([r1((f.x - V.x) / V.z), r1((f.y - V.y) / V.z), Math.round(p * 100) / 100, t, Math.round(ts - L.ts0)]);
+  return true;
+}
 function liveAdd(c) {
-  const k = 1 - (live.props.smoothing || 0) * 0.85;
-  live.sm[0] += (c.x - live.sm[0]) * k; live.sm[1] += (c.y - live.sm[1]) * k;
-  const last = live.pts[live.pts.length - 1];
-  if (Math.hypot(live.sm[0] - last[0], live.sm[1] - last[1]) < 0.7 / Math.max(V.z, 0.5)) return;
-  live.pts.push([r1(live.sm[0]), r1(live.sm[1]), c.pressure, c.t]);
-  liveDraw();
+  const L = live;
+  L.screenLen += Math.hypot(c.sx - L.raw.sx, c.sy - L.raw.sy);
+  L.raw = { sx: c.sx, sy: c.sy, pr: c.pressure, t: c.t }; L.lastTs = Math.max(L.lastTs, c.ts); L.handled = performance.now();
+  pushInk(c.sx, c.sy, c.pressure, L.lastTs, c.t);
+  if (L.held) {   // moved on: keep the line as drawn, and start timing a new hold from here
+    if (Math.hypot(c.sx - L.held.sx, c.sy - L.held.sy) > HOLD_ESCAPE) { L.held = null; L.anchor = { sx: c.sx, sy: c.sy, ms: performance.now() }; }
+  }
+  else if (Math.hypot(c.sx - L.anchor.sx, c.sy - L.anchor.sy) > HOLD_STILL) L.anchor = { sx: c.sx, sy: c.sy, ms: performance.now() };
+  requestLive();
 }
-function liveDraw(first) {
-  const x = liveCanvas.getContext("2d"), p = { ...live.props };
+// Every frame while drawing: let the line catch up when the pen pauses, and snap after a hold.
+function liveLoop() {
+  if (!live) return;
+  liveTick();
+  requestAnimationFrame(liveLoop);
+}
+function liveTick() {
+  const L = live; if (!L) return;
+  const now = performance.now();
+  // The pen has paused: let the line catch up. Timed from the last event handled, on the events' own clock.
+  if (now - L.handled > 25) {
+    L.predicted = [];
+    const ts = L.lastTs + Math.max(0, now - L.handled - 16);   // a little behind, so the next real event is never "older"
+    if (pushInk(L.raw.sx, L.raw.sy, L.raw.pr, ts, speech.now())) requestLive();
+  }
+  if (!L.held && settings.help !== "off" && now - L.anchor.ms > HOLD_MS && L.screenLen > 30) {
+    const shape = detectShape(L.pts);
+    if (shape) {
+      L.held = { sx: L.raw.sx, sy: L.raw.sy, shape, pts: shapePoints(shape, L.pts, Math.max(0.8, 2 / V.z), L.props.pen) };
+      toast(`Snapped to ${shape.name}. Move on before you lift to keep your own line.`, 2200);
+      requestLive();
+    } else L.anchor.ms = Infinity;   // nothing to snap to: don't keep checking until the pen moves again
+  }
+}
+// Draw the line so far onto the live layer. Returns the area that changed, for a partial redraw.
+function renderLive() {
+  const L = live, x = liveCanvas.getContext("2d");
   x.setTransform(1, 0, 0, 1, 0, 0);
-  if (p.mode === "flat") { x.clearRect(0, 0, liveCanvas.width, liveCanvas.height); drawStrokePts(x, p, live.pts); }
-  else { const from = first ? 0 : Math.max(0, live.drawn - 1); drawStrokePts(x, p, live.pts.slice(from), live.carry); live.drawn = live.pts.length; }
-  requestRender();
+  if (L.lastBox) x.clearRect(Math.floor(L.lastBox.x0), Math.floor(L.lastBox.y0), Math.ceil(L.lastBox.x1 - L.lastBox.x0) + 2, Math.ceil(L.lastBox.y1 - L.lastBox.y0) + 2);
+  let pts = L.held ? L.held.pts : L.pts;
+  if (!L.held && L.predicted.length) pts = pts.concat(L.predicted);
+  if (!pts.length) return L.lastBox;
+  const props = L.held && L.held.shape.closed ? { ...L.props, taper: false } : L.props;
+  drawInk(x, props, pts, false);
+  const b = padBox(boxOfPoints(pts), L.props.size * 1.2 + 3);
+  const changed = unionBox(b, L.lastBox); L.lastBox = b;
+  return changed;
+}
+// End the line where the pen is now, as if it had been lifted.
+function finishLive() {
+  const L = live; if (!L) return;
+  endLive({ sx: L.raw.sx, sy: L.raw.sy, x: (L.raw.sx - V.x) / V.z, y: (L.raw.sy - V.y) / V.z, t: speech.now(), ts: L.lastTs });
+}
+function stopLive() {
+  if (live) clearInterval(live.timer);
+  live = null;
+  liveCanvas?.getContext("2d").clearRect(0, 0, liveCanvas.width, liveCanvas.height);
 }
 function endLive(c) {
-  const last = live.pts[live.pts.length - 1];
-  if (Math.hypot(c.x - last[0], c.y - last[1]) > 0.7) { live.pts.push([r1(c.x), r1(c.y), c.pressure, c.t]); liveDraw(); }
-  const L = live; live = null;
-  liveCanvas.getContext("2d").clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-  commit({ type: "add", piece: { ...L.props, id: newId(doc), layer: L.layer, pts: L.pts, tf: [...I], clips: [], masks: [], erasers: [] }, t0: L.pts[0][3], t1: speech.now() });
+  const L = live;
+  // Catch up to where the pen actually stopped, like Photoshop's "catch-up on stroke end".
+  if (L.lastS && !L.held) {
+    const dx = c.sx - L.lastS.x, dy = c.sy - L.lastS.y;
+    if (Math.hypot(dx, dy) > 0.5) for (let k = 1; k <= 4; k++) {
+      const pr = L.pts.length ? L.pts[L.pts.length - 1][2] : 0.5;
+      L.pts.push([r1((L.lastS.x + dx * k / 4 - V.x) / V.z), r1((L.lastS.y + dy * k / 4 - V.y) / V.z), pr, c.t, Math.round(c.ts - L.ts0)]);
+    }
+  }
+  let pts = L.pts, props = L.props;
+  if (L.held) { pts = L.held.pts; props = { ...props, snapped: L.held.shape.name, ...(L.held.shape.closed ? { taper: false } : {}) }; }
+  else if (settings.help === "strong" && pts.length > 3) pts = tidy(pts, 6 / V.z);   // Strong help: smooth out the last wobbles
+  stopLive();
+  if (!pts.length) return requestRender();
+  commit({ type: "add", piece: { ...props, id: newId(doc), layer: L.layer, pts, tf: [...I], clips: [], masks: [], erasers: [] }, t0: pts[0][3], t1: speech.now() });
   lastStrokeEnd = { wall: performance.now(), x: c.x, y: c.y }; lastPoint = null;
 }
 
@@ -367,6 +462,7 @@ function swapColors() { [settings.primary, settings.secondary] = [settings.secon
 function setTool(id) {
   if (settings.tool === id) return renderOptions();
   if (editing) commitText();
+  if (live) { finishLive(); gesture = null; }   // a tool key pressed mid-line (a pen's shortcut button, say) keeps the line
   settings.tool = id; saveSettings();
   document.querySelectorAll(".tool[data-tool]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === id)));
   preview = null; renderOptions(); updateCursor(); requestRender();
@@ -384,7 +480,13 @@ const tools = {
       if (c.alt) return tools.eyedrop.down(c);
       if (!canDraw()) return;
       const b = settings.brushes[settings.brush];
-      startLive({ kind: "stroke", brush: settings.brush, mode: b.mode, size: b.size, opacity: b.opacity, hardness: b.hardness, flow: b.flow, smoothing: b.smoothing, pressureSize: b.pressureSize, pressureOpacity: b.pressureOpacity, blend: b.blend || null, color: settings.primary }, c);
+      const smoothing = settings.help === "strong" ? b.smoothing + (1 - b.smoothing) * 0.55 : b.smoothing;   // Strong help steadies the line more
+      const pen = c.ptype === "pen";
+      startLive({
+        kind: "stroke", v: 2, brush: settings.brush, mode: b.mode, size: b.size, opacity: b.opacity, hardness: b.hardness, flow: b.flow,
+        smoothing, pressureSize: b.pressureSize, pressureOpacity: b.pressureOpacity, blend: b.blend || null, color: settings.primary,
+        taper: !!b.taper, thin: !!b.thin, pen, gamma: pen ? { light: 0.6, normal: 1, firm: 1.6 }[settings.feel] || 1 : 1,
+      }, c);
     },
     move(c) { if (live) liveAdd(c); },
     up(c) { if (live) endLive(c); },
@@ -792,13 +894,14 @@ const pointers = new Map();
 let gesture = null, spaceDown = false, hoverPos = null;
 function ctxOf(e) {
   const [x, y] = toDoc(e.clientX, e.clientY), r = vp.getBoundingClientRect();
-  return { x, y, sx: e.clientX - r.left, sy: e.clientY - r.top, pressure: e.pointerType === "pen" ? (e.pressure || 0.5) : 0.5, t: speech.now(), shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey || e.metaKey };
+  return { x, y, sx: e.clientX - r.left, sy: e.clientY - r.top, pressure: e.pointerType === "pen" ? (e.pressure || 0.5) : 0.5, t: speech.now(), ts: e.timeStamp, ptype: e.pointerType, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey || e.metaKey };
 }
 view.addEventListener("pointerdown", e => {
   if (pb) stopPlayback();
   if (editing && settings.tool !== "text") commitText();
   try { view.setPointerCapture(e.pointerId); } catch (_) {}
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+  if (e.pointerType === "pen" && !settings.penSeen) { settings.penSeen = true; saveSettings(); renderOptions(); }   // show Pressure feel from now on
   $("hint").hidden = true;
   if (e.pointerType === "touch" && pointers.size === 2) {
     cancelToolGesture();
@@ -831,6 +934,14 @@ view.addEventListener("pointermove", e => {
     const tool = tools[settings.tool];
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     for (const ev of evs.length ? evs : [e]) tool.move?.(ctxOf(ev));
+    // Draw a few predicted points ahead of the pen in the preview only, run through a copy of the smoothing.
+    if (live && !live.held && e.getPredictedEvents) {
+      const f = live.filter.clone(), pr = live.pts.length ? live.pts[live.pts.length - 1][2] : 0.5;
+      live.predicted = e.getPredictedEvents().map(ev => {
+        const q = ctxOf(ev), s = f.next(q.sx, q.sy, q.ts);
+        return [(s.x - V.x) / V.z, (s.y - V.y) / V.z, live.props.pen ? q.pressure : pr, q.t, Math.round(q.ts - live.ts0)];
+      });
+    }
     return;
   }
   if (!gesture && !e.buttons) hoverPoint(c);
@@ -844,7 +955,7 @@ function endPointer(e, cancel) {
   if (gesture?.type === "pan" && gesture.id === e.pointerId) { gesture = null; updateCursor(); return; }
   if (gesture?.type === "tool" && gesture.id === e.pointerId) {
     gesture = null;
-    if (cancel && live) { live = null; liveCanvas.getContext("2d").clearRect(0, 0, liveCanvas.width, liveCanvas.height); requestRender(); return; }
+    if (cancel && live) { stopLive(); requestRender(); return; }
     tools[settings.tool].up?.(ctxOf(e));
   }
 }
@@ -853,7 +964,7 @@ view.addEventListener("pointercancel", e => endPointer(e, true));
 view.addEventListener("pointerleave", () => { hoverPos = null; clearTimeout(dwellTimer); hover = []; requestRender(); });
 view.addEventListener("contextmenu", e => e.preventDefault());
 function cancelToolGesture() {
-  if (live) { live = null; liveCanvas.getContext("2d").clearRect(0, 0, liveCanvas.width, liveCanvas.height); }
+  if (live) stopLive();
   if (eraseWork) eraseWork = null;
   if (floating) drop(null);
   drag = null; preview = null; gesture = null; requestRender();
@@ -999,6 +1110,8 @@ async function importFile(f, name, at) {
 
 // ---------------------------------------------------------------- options bar
 function optLabel(text, ...kids) { const l = el("label", { className: "opt" }); l.append(text, ...kids); return l; }
+// For a group of buttons: a label would pass clicks on its words through to the first button.
+function optGroup(text, ...kids) { const s = el("span", { className: "opt" }); s.append(text, ...kids); return s; }
 function slider(text, min, max, step, value, onInput, show = v => v) {
   const out = el("output", { textContent: show(value) });
   const inp = el("input", { type: "range", min, max, step, value });
@@ -1008,7 +1121,7 @@ function slider(text, min, max, step, value, onInput, show = v => v) {
 }
 function seg(items, value, onPick) {
   const s = el("div", { className: "seg" });
-  for (const [v, label] of items) { const b = el("button", { type: "button", textContent: label }); b.setAttribute("aria-pressed", String(v === value)); b.onclick = () => { onPick(v); saveSettings(); renderOptions(); }; s.append(b); }
+  for (const [v, label, title] of items) { const b = el("button", { type: "button", textContent: label, title: title || "" }); b.setAttribute("aria-pressed", String(v === value)); b.onclick = () => { onPick(v); saveSettings(); renderOptions(); }; s.append(b); }
   return s;
 }
 function check(text, value, onChange) { const i = el("input", { type: "checkbox", checked: value }); i.onchange = () => { onChange(i.checked); saveSettings(); }; return optLabel(i, " " + text); }
@@ -1027,13 +1140,23 @@ function renderOptions() {
   if (t === "brush") {
     const b = settings.brushes[settings.brush];
     o.append(seg(Object.entries(settings.brushes).map(([k, v]) => [k, v.label]), settings.brush, v => { settings.brush = v; }));
+    o.append(optGroup("Drawing help", seg([
+      ["off", "Off", "No snapping or tidying: just your Smoothing setting. For full control."],
+      ["light", "Light", "Hold still at the end of a line to snap it into a clean line, circle, box or triangle."],
+      ["strong", "Strong", "Extra smoothing, snapping, and each line tidied after you lift. Good for a mouse or a shaky hand."],
+    ], settings.help, v => { settings.help = v; })));
     o.append(slider("Size", 1, 300, 1, b.size, v => { b.size = v; requestRender(); }));
     o.append(slider("Opacity", 0.05, 1, 0.05, b.opacity, v => { b.opacity = v; }, pct));
+    o.append(slider("Smoothing", 0, 1, 0.05, b.smoothing, v => { b.smoothing = v; }, pct));
     if (b.mode === "dab") o.append(slider("Softness", 0, 1, 0.05, 1 - b.hardness, v => { b.hardness = 1 - v; }, pct));
     if (b.mode === "dab") o.append(slider("Flow", 0.02, 1, 0.02, b.flow, v => { b.flow = v; }, pct));
-    o.append(slider("Smoothing", 0, 1, 0.05, b.smoothing, v => { b.smoothing = v; }, pct));
     o.append(check("Pen pressure: size", b.pressureSize, v => { b.pressureSize = v; }), check("opacity", b.pressureOpacity, v => { b.pressureOpacity = v; }));
-    o.append(swatchRow(), hint("Alt-click picks a colour. [ and ] change size."));
+    if (settings.penSeen) o.append(optGroup("Pressure feel", seg([
+      ["light", "Light", "For a light touch: thick lines come easily."],
+      ["normal", "Normal", "Even response."],
+      ["firm", "Firm", "For a heavy hand: press harder for thick lines."],
+    ], settings.feel, v => { settings.feel = v; })));
+    o.append(swatchRow(), hint(settings.help === "off" ? "Alt-click picks a colour. [ and ] change size." : "Hold at the end of a line to snap it. Alt-click picks a colour."));
   } else if (t === "eraser") {
     o.append(slider("Size", 2, 400, 1, settings.eraserSize, v => { settings.eraserSize = v; requestRender(); }), hint("Erases on the active layer only."));
   } else if (t === "move") {
@@ -1346,7 +1469,7 @@ async function offerRestore() {
 }
 async function loadDraft(d) {
   if (speech.isRunning()) await stopRec();
-  stopPlayback(); if (editing) commitText();
+  stopPlayback(); if (editing) commitText(); cancelToolGesture();
   doc = d.doc; speech.setClock(d.clock || 0); audioBlobs = new Map(d.audio || []); activeLayer = d.activeLayer || "l0";
   redoStack = []; maskData.clear();
   forgetImages(); await preloadAssets(doc);
@@ -1356,7 +1479,7 @@ async function loadDraft(d) {
 }
 armed($("new"), "Sure? Tap again", async () => {
   if (speech.isRunning()) await stopRec();
-  stopPlayback(); if (editing) commitText();
+  stopPlayback(); if (editing) commitText(); cancelToolGesture();
   doc = newDoc(); audioBlobs = new Map(); redoStack = []; activeLayer = "l0"; speech.setClock(0); forgetImages(); maskData.clear();
   restorePending = false; $("restore").hidden = true;
   try { await idbDo("readwrite", st => st.delete("draft")); } catch (_) {}

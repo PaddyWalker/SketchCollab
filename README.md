@@ -32,7 +32,7 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 | Marquee (M) | Rectangle or ellipse selection on the active layer. Anything partly inside, even part of a photo, is cut out when you move or delete it. |
 | Lasso (L) | Draw around what you want on the active layer. Works the same as Marquee. |
 | Quick select (W) | Click a drawing to grab the whole connected piece. Click a photo to select an area of similar colour (the magic wand). |
-| Brush (B) | Pencil, Ink pen, Soft brush, Marker, Highlighter, Airbrush. Size, opacity, softness, flow, smoothing, and pen pressure for size or opacity. [ and ] change the size. Alt-click picks a colour. |
+| Brush (B) | Pencil, Ink pen, Soft brush, Marker, Highlighter, Airbrush. Size, opacity, smoothing, softness, flow, and pen pressure for size or opacity. **Drawing help** (see below). With a pen, **Pressure feel** (Light, Normal, Firm) sets how hard you press for a thick line. [ and ] change the size. Alt-click picks a colour. |
 | Eraser (E) | Rubs out on the active layer only. |
 | Paint bucket (G) | Fills an area with your main colour. |
 | Gradient (Shift+G) | Drag from your main colour to your second colour. Fills the selection, or the whole drawing if nothing is selected. Linear or radial. |
@@ -45,6 +45,24 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 
 Other keys: Ctrl+Z undo, Ctrl+Y redo, Ctrl+C / Ctrl+X / Ctrl+V, Ctrl+A select all on the layer,
 Ctrl+D deselect, Delete, X swap colours, D default colours, R start or stop talking.
+
+## How lines are drawn, and Drawing help
+
+Every new line is smoothed as you draw. Slow, careful lines get the most smoothing, where wobble shows,
+and quick lines get very little, so they never lag behind the pen. The Smoothing slider sets how much.
+Lines are drawn as one smooth shape that tapers in and out at the ends. With a mouse, a line thins a little
+when you move fast, like a real pen. When you pause, the line catches up to the pen, and it finishes exactly
+where you lift.
+
+**Drawing help** is in the brush settings:
+
+| Level | What it does |
+|---|---|
+| Off | No snapping or tidying, just your Smoothing setting. Set Smoothing to 0 for a completely raw line. |
+| Light (default) | Draw a rough line, circle, box or triangle and hold still for half a second at the end: it snaps into a clean one. Keep moving before you lift to keep your own line. |
+| Strong | Extra smoothing, snapping, and each line gently tidied after you lift. Good for a mouse or a shaky hand. |
+
+Lines drawn before this was added keep their original look.
 
 ## Pictures
 

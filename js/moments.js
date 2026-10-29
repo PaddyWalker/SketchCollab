@@ -60,10 +60,18 @@ export function describe(m, doc, before, after) {
   for (const e of evs) if (e.type === "add") added.push(e.piece); else if (e.type === "addMany" && !e.paste) added.push(...e.pieces);
   const boxOf = ps => ps.reduce((b, p) => unionBox(b, docBox(after.pieces.get(p.id) || p)), null);
   for (const e of evs) if (e.type === "addMany" && e.paste) out.push(`Pasted ${e.pieces.length === 1 ? "a copy of a piece" : `copies of ${e.pieces.length} pieces`}, ${where(boxOf(e.pieces), W, H)}.`);
-  const strokes = added.filter(p => p.kind === "stroke");
+  const strokes = added.filter(p => p.kind === "stroke" && !p.snapped), snapped = added.filter(p => p.kind === "stroke" && p.snapped);
   if (strokes.length) {
     const tools = listWords(strokes.map(p => (BRUSHES[p.brush]?.label || "pen").toLowerCase()));
     out.push(`Drew ${strokes.length} line${strokes.length > 1 ? "s" : ""} (${tools}) in ${listWords(strokes.map(p => colourName(p.color)))}, ${where(boxOf(strokes), W, H)}.`);
+  }
+  // Lines that snapped into a clean shape when the pen was held still at the end.
+  if (snapped.length) {
+    const counts = new Map();
+    for (const p of snapped) { const k = `${p.snapped}|${colourName(p.color)}`; counts.set(k, (counts.get(k) || 0) + 1); }
+    const plural = name => { const w = name.replace(/^an? /, ""); return / with /.test(w) ? w.replace(/^(\S+)/, "$1s") : w + "s"; };
+    const parts = [...counts].map(([k, n]) => { const [name, col] = k.split("|"); return n === 1 ? `${name} in ${col}` : `${n} ${plural(name)} in ${col}`; });
+    out.push(`Drew ${listWords(parts)} (snapped clean), ${where(boxOf(snapped), W, H)}.`);
   }
   const shapes = added.filter(p => p.kind === "shape");
   if (shapes.length) out.push(`Drew ${listWords(shapes.map(p => `a ${colourName(p.color)} ${shapeWord[p.shape]}${p.fill ? ` filled ${colourName(p.fill)}` : ""}`))}, ${where(boxOf(shapes), W, H)}.`);

@@ -1,18 +1,20 @@
 // Drawing pieces, layers and whole pictures onto canvases. Everything here works in drawing
 // coordinates: one unit is one pixel of the finished picture.
 
-import { makeCanvas, hexToRgb } from "./util.js";
+import { makeCanvas } from "./util.js";
 import { docBox, PAPERS } from "./doc.js";
+import { drawInk, sprite } from "./ink.js";
 
 // Brush presets. Each new stroke copies its settings, so later changes never alter old lines.
 // mode: "hard" = solid line whose width follows pressure, "dab" = soft round stamps, "flat" = even ink.
+// taper: the line thins in and out at its ends. thin: with a mouse, the line thins a little when you move fast.
 export const BRUSHES = {
-  pencil:      { label: "Pencil",      mode: "hard", size: 3,  opacity: 0.9,  hardness: 1,    flow: 1,    smoothing: 0.1,  pressureSize: true,  pressureOpacity: true },
-  pen:         { label: "Ink pen",     mode: "hard", size: 6,  opacity: 1,    hardness: 1,    flow: 1,    smoothing: 0.45, pressureSize: true,  pressureOpacity: false },
-  brush:       { label: "Soft brush",  mode: "dab",  size: 28, opacity: 0.9,  hardness: 0.4,  flow: 1,    smoothing: 0.3,  pressureSize: true,  pressureOpacity: false },
-  marker:      { label: "Marker",      mode: "flat", size: 18, opacity: 0.6,  hardness: 1,    flow: 1,    smoothing: 0.3,  pressureSize: false, pressureOpacity: false },
-  highlighter: { label: "Highlighter", mode: "flat", size: 30, opacity: 0.4,  hardness: 1,    flow: 1,    smoothing: 0.4,  pressureSize: false, pressureOpacity: false },
-  airbrush:    { label: "Airbrush",    mode: "dab",  size: 70, opacity: 0.8,  hardness: 0,    flow: 0.1,  smoothing: 0.2,  pressureSize: false, pressureOpacity: true },
+  pencil:      { label: "Pencil",      mode: "hard", size: 3,  opacity: 0.9,  hardness: 1,    flow: 1,    smoothing: 0.1,  pressureSize: true,  pressureOpacity: true,  taper: true,  thin: true },
+  pen:         { label: "Ink pen",     mode: "hard", size: 6,  opacity: 1,    hardness: 1,    flow: 1,    smoothing: 0.45, pressureSize: true,  pressureOpacity: false, taper: true,  thin: true },
+  brush:       { label: "Soft brush",  mode: "dab",  size: 28, opacity: 0.9,  hardness: 0.4,  flow: 1,    smoothing: 0.3,  pressureSize: true,  pressureOpacity: false, taper: true,  thin: false },
+  marker:      { label: "Marker",      mode: "flat", size: 18, opacity: 0.6,  hardness: 1,    flow: 1,    smoothing: 0.3,  pressureSize: false, pressureOpacity: false, taper: false, thin: false },
+  highlighter: { label: "Highlighter", mode: "flat", size: 30, opacity: 0.4,  hardness: 1,    flow: 1,    smoothing: 0.4,  pressureSize: false, pressureOpacity: false, taper: false, thin: false },
+  airbrush:    { label: "Airbrush",    mode: "dab",  size: 70, opacity: 0.8,  hardness: 0,    flow: 0.1,  smoothing: 0.2,  pressureSize: false, pressureOpacity: true,  taper: false, thin: false },
 };
 export const FONTS = {
   sans: '"Atkinson Hyperlegible", "Segoe UI", sans-serif',
@@ -45,22 +47,7 @@ export async function preloadAssets(doc) {
 }
 export const forgetImages = () => images.clear();
 
-// ---------- brush helpers ----------
-const sprites = new Map();
-function sprite(color, hardness) {
-  const key = color + "|" + hardness.toFixed(2);
-  let c = sprites.get(key);
-  if (c) return c;
-  c = makeCanvas(128, 128);
-  const x = c.getContext("2d"), [r, g, b] = hexToRgb(color), gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
-  gr.addColorStop(0, `rgba(${r},${g},${b},1)`);
-  gr.addColorStop(Math.min(0.97, Math.max(0.01, hardness)), `rgba(${r},${g},${b},1)`);
-  gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
-  x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
-  if (sprites.size > 200) sprites.clear();
-  sprites.set(key, c);
-  return c;
-}
+// ---------- brush helpers (lines drawn before the new ink; new lines use ink.js) ----------
 const sizeAt = (p, pr) => p.size * (p.pressureSize ? 0.3 + pr * 1.4 : 1);
 const alphaAt = (p, pr) => (p.pressureOpacity ? Math.min(1, 0.25 + pr * 1.5) : 1);
 
@@ -149,7 +136,12 @@ function drawRegion(ctx, doc, c) {
 }
 function drawContent(ctx, p, doc, limitT) {
   switch (p.kind) {
-    case "stroke": drawStrokePts(ctx, p, limitT < Infinity ? p.pts.filter(q => q[3] <= limitT) : p.pts); break;
+    case "stroke": {
+      const pts = limitT < Infinity ? p.pts.filter(q => q[3] <= limitT) : p.pts;
+      if (p.v === 2) drawInk(ctx, p, pts, pts.length === p.pts.length);   // new ink; older lines keep their original look
+      else drawStrokePts(ctx, p, pts);
+      break;
+    }
     case "shape": drawShape(ctx, p); break;
     case "text": drawText(ctx, p); break;
     case "image": { const im = getImage(doc, p.asset); if (im) ctx.drawImage(im, p.x, p.y, p.w, p.h); break; }
