@@ -725,6 +725,15 @@ function handlePoints(sb) {
     { x: sb.x0, y: my, ax: sb.x1, ay: my, k: "x" }, { x: sb.x1, y: my, ax: sb.x0, ay: my, k: "x" },
   ];
 }
+// The cursor for each handle: a turning arrow on the rotate handle; on the corners, the diagonal that points the way
+// that corner pulls (top-left and bottom-right one way, top-right and bottom-left the other).
+const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 9A7 7 0 1 0 19 14" stroke="#fff" stroke-width="4.5"/><path d="M19.5 4v5h-5" stroke="#fff" stroke-width="4.5"/><path d="M18.5 9A7 7 0 1 0 19 14" stroke="#111" stroke-width="2"/><path d="M19.5 4v5h-5" stroke="#111" stroke-width="2"/></g></svg>')}") 12 12, grab`;
+function handleCursor(h) {
+  if (h.k === "r") return ROTATE_CURSOR;
+  if (h.k === "x") return "ew-resize";
+  if (h.k === "y") return "ns-resize";
+  return (h.x - h.ax) * (h.y - h.ay) > 0 ? "nwse-resize" : "nesw-resize";
+}
 // The rotate handle sits a little above the top middle, at the same distance on screen at any zoom.
 function rotateHandle(sb) { return { x: (sb.x0 + sb.x1) / 2, y: sb.y0 - 26 / V.z, k: "r" }; }
 function handleAt(sb, sx, sy) {
@@ -993,7 +1002,11 @@ view.addEventListener("pointermove", e => {
   }
   if (!gesture && !e.buttons) hoverPoint(c);
   if (team) sendCursor(c.x, c.y);
-  if (settings.tool === "move") { const sb = selectionBox(); const h = sb && handleAt(sb, c.sx, c.sy); view.style.cursor = h ? (h.k === "r" ? "grab" : h.k === "x" ? "ew-resize" : h.k === "y" ? "ns-resize" : "nwse-resize") : sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 ? "move" : "default"; }
+  if (settings.tool === "move") {
+    if (drag?.type === "scale" || drag?.type === "rotate") return;   // keep the handle's cursor for the whole drag
+    const sb = selectionBox(); const h = sb && handleAt(sb, c.sx, c.sy);
+    view.style.cursor = h ? handleCursor(h) : sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 ? "move" : "default";
+  }
   if (settings.tool === "brush" || settings.tool === "eraser") requestRender();
 });
 function endPointer(e, cancel) {
