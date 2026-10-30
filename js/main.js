@@ -431,18 +431,21 @@ const ICON = {
   gradient: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 4v16M12 4v16" stroke-opacity=".6"/><path d="M16 4v16" stroke-opacity=".3"/>',
   shape: '<rect x="3.5" y="10" width="9" height="9" rx="1"/><circle cx="16.5" cy="8" r="4.5"/>',
   text: '<path d="M5 7V4h14v3M12 4v16M9 20h6"/>',
-  eyedrop: '<path d="M14.5 4.5l5 5-2 2-5-5z"/><path d="M13 8l-8 8v3h3l8-8"/>',
+  // The pipette from Lucide (lucide.dev, ISC licence): a squeeze bulb, a collar and a thin glass tube.
+  eyedrop: '<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>',
   point: '<path d="M5 3l14 8-6 2-2 6z"/>',
   hand: '<path d="M8 12.5V6a1.5 1.5 0 013 0v5V4.5a1.5 1.5 0 013 0V11V6a1.5 1.5 0 013 0v7.5c0 4-2.7 6.5-6 6.5-2.5 0-4-1-5.6-3.4L4.1 13.9a1.5 1.5 0 012.4-1.8z"/>',
   zoom: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M8 10.5h5M10.5 8v5"/>',
   import: '<rect x="3" y="5" width="15" height="13" rx="2"/><circle cx="8" cy="10" r="1.6"/><path d="M18 14l-4-4-7 8"/><path d="M19 2v6M16 5h6"/>',
 };
+// The tools come in groups, each with a short name above it ("group" entries).
 const TOOLS = [
+  { group: "Select" },
   { id: "move", key: "v", label: "Move and select (V)" },
   { id: "marquee", key: "m", label: "Marquee select, rectangle or ellipse (M)" },
   { id: "lasso", key: "l", label: "Lasso select (L)" },
   { id: "quick", key: "w", label: "Quick select: grab a whole drawing, or a colour area of a photo (W)" },
-  "sep",
+  { group: "Draw and paint" },
   { id: "brush", key: "b", label: "Brush and pencil (B)" },
   { id: "eraser", key: "e", label: "Eraser (E)" },
   { id: "bucket", key: "g", label: "Paint bucket (G)" },
@@ -450,7 +453,7 @@ const TOOLS = [
   { id: "shape", key: "u", label: "Shapes: rectangle, ellipse, line, arrow (U)" },
   { id: "text", key: "t", label: "Text (T)" },
   { id: "eyedrop", key: "i", label: "Eyedropper: pick a colour from the drawing (I)" },
-  "sep",
+  { group: "Point and view" },
   { id: "point", key: "p", label: "Point: press and drag to show what you mean. With a mouse or pen, resting on something while you talk also points (P)" },
   { id: "hand", key: "h", label: "Hand: move around the drawing (H, or hold Space)" },
   { id: "zoom", key: "z", label: "Zoom: click to zoom in, Alt-click to zoom out (Z)" },
@@ -458,13 +461,13 @@ const TOOLS = [
 function buildToolbar() {
   const nav = $("tools"); nav.textContent = "";
   for (const t of TOOLS) {
-    if (t === "sep") { nav.append(el("div", { className: "tsep" })); continue; }
+    if (t.group) { nav.append(el("div", { className: "tgroup", textContent: t.group })); continue; }
     const b = el("button", { className: "tool", title: t.label, type: "button" });
     b.dataset.tool = t.id; b.setAttribute("aria-label", t.label); b.innerHTML = `<svg viewBox="0 0 24 24">${ICON[t.id]}</svg>`;
     b.onclick = () => setTool(t.id);
     nav.append(b);
   }
-  nav.append(el("div", { className: "tsep" }));
+  nav.append(el("div", { className: "tgroup", textContent: "Pictures and colours" }));
   const imp = el("button", { className: "tool", title: "Bring in pictures: JPG, PNG, GIF, WebP, BMP, SVG, AVIF (you can also paste or drop them)", type: "button" });
   imp.setAttribute("aria-label", "Import pictures"); imp.innerHTML = `<svg viewBox="0 0 24 24">${ICON.import}</svg>`; imp.onclick = () => $("importInput").click();
   nav.append(imp);
