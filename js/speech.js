@@ -22,7 +22,7 @@ let cb = {}, rec = null, starts = {}, micBlocked = false, failTimes = [];
 // Speech-to-text is Chrome's, and it can stop or stall on its own. It's kept going until Stop is pressed: restarted
 // after every end, retried after failures (never given up on), and restarted if it goes quiet while the mic hears
 // someone. What happened is noted (cb.onLog), so a session shows why any words are missing.
-let lastHeard = 0, lastWords = 0, restarts = 0, watchdog = null, level = null;
+let lastHeard = 0, lastWords = 0, restarts = 0, watchdog = null, level = null, lastSignal = 0, silentWarned = false;
 let gen = 0, audio = null;   // gen: which Start press the audio belongs to
 
 export function start(callbacks) {
@@ -115,6 +115,7 @@ async function startAudio(myGen) {
   const chunks = [];
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   audio = { recorder, stream, chunks, t0: now(), onDone: cb.onAudio };
+  lastSignal = Date.now(); silentWarned = false;
   recorder.start(1000);
   try {   // how loud the mic is, a few times a second: talking counts as heard
     const ac = new AudioContext(), an = ac.createAnalyser(), buf = new Uint8Array(512);
@@ -125,6 +126,13 @@ async function startAudio(myGen) {
       an.getByteTimeDomainData(buf);
       let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
       if (peak > 18) lastHeard = Date.now();
+      if (peak > 0) { lastSignal = Date.now(); if (silentWarned) { silentWarned = false; cb.onMic?.("on"); } }
+      // A real microphone always hears a little room noise. Nothing at all means no sound is reaching the app.
+      else if (Date.now() - lastSignal > 6000 && !silentWarned) {
+        silentWarned = true; log("mic silent", "the microphone is sending no sound");
+        cb.onMic?.("silent");
+        cb.onToast?.("Your microphone isn't sending any sound, so nothing you say is being recorded. Check it isn't muted (in Windows or on a headset), that no other program is using it, and that only one SketchCollab window is open.", 15000);
+      }
     }, 250);
   } catch (_) {}
 }

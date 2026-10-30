@@ -1438,7 +1438,7 @@ $("playStop").onclick = stopPlayback;
 const recBtn = $("rec"), micPill = $("mic");
 let tickTimer = null;
 function setMic(s) {
-  const map = { off: ["Mic off", ""], on: ["Listening", "live"], blocked: ["Mic blocked", "warn"], none: ["No speech-to-text here", "warn"], error: ["Words not coming through: restarting", "warn"] };
+  const map = { off: ["Mic off", ""], on: ["Listening", "live"], blocked: ["Mic blocked", "warn"], none: ["No speech-to-text here", "warn"], error: ["Words not coming through: restarting", "warn"], silent: ["Mic sends no sound", "warn"] };
   const [label, cls] = map[s]; micPill.textContent = label; micPill.className = "pill " + cls;
 }
 function startRec() {
