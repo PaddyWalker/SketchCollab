@@ -2321,8 +2321,8 @@ function drawCursors(c, px) {
     c.fillStyle = m.color; c.strokeStyle = "#fff"; c.lineWidth = 1.5;
     c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 17); c.lineTo(4.5, 13); c.lineTo(8, 20); c.lineTo(10.5, 19); c.lineTo(7, 12); c.lineTo(13, 12); c.closePath(); c.fill(); c.stroke();
     c.font = '700 12px "Atkinson Hyperlegible", "Segoe UI", sans-serif';
-    const w = c.measureText(m.name).width + 12;
-    c.fillRect(12, 18, w, 19); c.fillStyle = "#fff"; c.fillText(m.name, 18, 32);
+    const label = m.host ? `${m.name} · Host` : m.name, w = c.measureText(label).width + 12;
+    c.fillRect(12, 18, w, 19); c.fillStyle = "#fff"; c.fillText(label, 18, 32);
     c.restore();
   }
 }
@@ -2330,8 +2330,9 @@ function renderPeople() {
   const box = $("people"); box.textContent = "";
   box.hidden = !team;
   if (team) for (const m of team.members) {
-    const chip = el("span", { className: "person" + (m.online ? "" : " off"), title: m.online ? `${m.name} is here` : `${m.name} has left or lost connection` });
+    const chip = el("span", { className: "person" + (m.online ? "" : " off") + (m.host ? " host" : ""), title: `${m.name}${m.host ? ", the host: started the session, and saves and sends it" : ""}${m.online ? " is here" : " has left or lost connection"}` });
     const dot = el("i"); dot.style.background = m.color; chip.append(dot, m.id === team.id ? `${m.name} (you)` : m.name);
+    if (m.host) chip.append(el("b", { className: "hostbadge", textContent: "Host" }));
     const pg = m.id === team.id ? curPage : team.pageOf.get(m.id);
     if (state.pages.length > 1 && pg) chip.append(el("small", { textContent: ` · ${state.pages.find(p => p.id === pg)?.name || ""}` }));
     box.append(chip);
