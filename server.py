@@ -814,14 +814,16 @@ def inbox_item(item_id):
         item = json.loads((d / "item.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    images = []
-    for img in item.get("images") or []:
-        f = d / str(img.get("file", ""))
-        if f.parent != d or f.suffix.lower() not in IMAGE_TYPES or not f.is_file():
-            continue   # only pictures inside the item's own folder
-        images.append({"caption": str(img.get("caption", ""))[:300], "name": f.name,
-                       "data": f"data:{IMAGE_TYPES[f.suffix.lower()]};base64,{base64.b64encode(f.read_bytes()).decode()}"})
-    item["images"], item["id"] = images, item_id
+    def picture(img):
+        f = d / str(img.get("file", "")) if isinstance(img, dict) else None
+        if not f or f.parent != d or f.suffix.lower() not in IMAGE_TYPES or not f.is_file():
+            return None   # only pictures inside the item's own folder
+        return {"caption": str(img.get("caption", ""))[:300], "name": f.name,
+                "data": f"data:{IMAGE_TYPES[f.suffix.lower()]};base64,{base64.b64encode(f.read_bytes()).decode()}"}
+
+    item["images"] = [p for p in map(picture, item.get("images") or []) if p]
+    item["sheet"] = picture(item.get("sheet"))   # the turnaround sheet, which opens in a tab of its own
+    item["id"] = item_id
     return item
 
 

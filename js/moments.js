@@ -221,6 +221,12 @@ export function wordsText(doc, state, moments, lengthMs, files) {
 const AGENT = { done: "done", partly: "partly done", "not yet": "not done yet" };
 function goalsText(doc, L) {
   const goals = doc.goals || [];
+  if (doc.kind === "sheet") {
+    const r = doc.review || {};
+    L.push(`## Notes on the turnaround sheet of build ${r.round || 1}${r.session ? ` (a build of session ${r.session})` : ""}`, "");
+    L.push("The layer “Turnaround” holds the agent's sheet: the build from every side, then from above and below. Anything drawn on “Your notes” and everything said is what to change: marks on a view point at what to change there.", "");
+    return;
+  }
   if (doc.kind === "review") {
     const r = doc.review || {};
     L.push(`## Review of build ${r.round || 1}${r.session ? ` (a build of session ${r.session})` : ""}`, "");

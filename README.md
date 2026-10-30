@@ -154,11 +154,14 @@ the result back for you to check. Agents follow [AGENT_LOOP.md](AGENT_LOOP.md).
 
 1. **Goals.** Type what the build must get right under **Goals for the build**, or press **Send to Claude** and
    Claude drafts the list from what you said and drew. Its goals show up marked *Claude*; change, remove or add any.
-2. **Build it** sends the sketch and the goals. The tab says *Building*.
+2. **Build it** sends the sketch and the goals. The tab says *Building*. Leave **Also send a turnaround sheet** ticked to get the build from every
+   side, plus from the top and the bottom, as well (for 3D models). Untick it if you don't need one.
 3. **The build comes back** as a new tab beside your sketch: the agent's pictures on a locked layer *What was
    built*, its summary, and a goal-by-goal report (Done, Partly, Not yet).
 4. **Review it.** Mark each goal **Good** or **Needs a change** (and say what), draw on the pictures on the *Your
    notes* layer, and talk through anything that's off, just like a normal sketch.
+   The turnaround sheet opens in a tab of its own beside the build: 8 views all the way round, then the top and
+   the bottom. Draw on it and talk, and Send back from there too.
 5. **Send back for changes** (or **Send back** at the top) and the next build opens as another tab.
    **Approve** when it's right.
 

@@ -1573,16 +1573,16 @@ async function closeTab(id) {
   renderTabs();
 }
 const STATUS_TEXT = { draft: "Goals to check", building: "Building", built: "Built", review: "To review", changes: "Changes sent", approved: "Approved" };
-function tabLabel(t) { return t.title || (t.kind === "review" ? `Build ${t.round || 1}` : "Untitled sketch"); }
+function tabLabel(t) { return t.title || (t.kind === "review" ? `Build ${t.round || 1}` : t.kind === "sheet" ? `Turnaround ${t.round || 1}` : "Untitled sketch"); }
 function renderTabs() {
   const box = $("tabs"); box.hidden = isGuestPage; if (isGuestPage) return;
   box.textContent = "";
   for (const t of tabs) {
-    const b = el("div", { className: "tab" + (t.id === curTab ? " on" : "") + (t.kind === "review" ? " review" : "") + (t.fresh ? " fresh" : ""), role: "tab" });
+    const b = el("div", { className: "tab" + (t.id === curTab ? " on" : "") + (t.kind === "review" || t.kind === "sheet" ? " review" : "") + (t.fresh ? " fresh" : ""), role: "tab" });
     b.setAttribute("aria-selected", String(t.id === curTab));
     const parent = t.parent && tabOf(t.parent);
     const go = el("button", { type: "button", className: "tgo", title: parent ? `A build of “${tabLabel(parent)}”` : tabLabel(t) });
-    if (t.kind === "review") go.append(el("span", { className: "tkind", textContent: "↳" }));
+    if (t.kind === "review" || t.kind === "sheet") go.append(el("span", { className: "tkind", textContent: "↳" }));
     go.append(el("span", { className: "tname", textContent: tabLabel(t) }));
     if (STATUS_TEXT[t.status]) go.append(el("span", { className: "tstat s-" + t.status, textContent: STATUS_TEXT[t.status] }));
     go.onclick = () => switchTab(t.id);
@@ -1711,7 +1711,7 @@ async function exportSession(send, request = null) {
 }
 function download(name, href) { const a = el("a", { href, download: name }); document.body.append(a); a.click(); a.remove(); }
 $("save").onclick = () => exportSession(false);
-$("send").onclick = () => doc.kind === "review" ? sendReview("changes") : exportSession(true);
+$("send").onclick = () => doc.kind === "review" || doc.kind === "sheet" ? sendReview("changes") : exportSession(true);
 $("copyPic").onclick = async () => {
   if (!hasContent()) return toast("Draw or say something first.");
   try {
@@ -1741,12 +1741,15 @@ function goalsChanged() { changed(); renderGoals(); }
 function renderGoals() {
   if (document.activeElement?.matches?.("#goalList .gtext, #goalList .gcomment")) { document.activeElement.addEventListener("blur", () => setTimeout(renderGoals, 0), { once: true }); return; }   // you're typing in a goal: wait
   const box = $("goals"); box.hidden = isGuestPage; if (isGuestPage) return;
-  const review = doc.kind === "review", goals = goalsOf(), st = doc.goalsState;
+  const sheet = doc.kind === "sheet", review = doc.kind === "review" || sheet, goals = sheet ? [] : goalsOf(), st = doc.goalsState;
   box.classList.toggle("collapsed", !!settings.goalsShut && !review && st !== "draft");
-  $("goalsTitle").textContent = review ? "Check the build" : "Goals for the build";
-  $("goalsCount").textContent = review ? `${goals.filter(g => g.verdict).length} of ${goals.length} checked` : goals.length ? String(goals.length) : "";
+  $("goalsTitle").textContent = sheet ? "Turnaround sheet" : review ? "Check the build" : "Goals for the build";
+  $("goalsCount").textContent = sheet ? "" : review ? `${goals.filter(g => g.verdict).length} of ${goals.length} checked` : goals.length ? String(goals.length) : "";
   const note = $("goalsNote"); note.textContent = "";
-  if (review) {
+  if (sheet) {
+    note.append(el("p", { className: "muted", textContent: st === "changes" ? "Your notes on the turnaround were sent back for changes."
+      : `Build ${doc.review?.round || 1} from every side, plus the top and the bottom. Draw on anything that's off and talk it through, then press Send back for changes. Mark the goals in the build's own tab.` }));
+  } else if (review) {
     const r = doc.review || {};
     if (r.summary) note.append(el("p", { className: "gsum", textContent: r.summary }));
     if (r.built?.length) { const ul = el("ul", { className: "gbuilt" }); r.built.forEach(b => ul.append(el("li", { textContent: b }))); note.append(ul); }
@@ -1803,7 +1806,11 @@ function renderGoals() {
   });
   $("goalForm").hidden = review;
   const act = $("goalActions"); act.textContent = "";
-  if (review) {
+  if (sheet) {
+    const back = el("button", { type: "button", className: "btn primary", textContent: "Send back for changes" });
+    back.onclick = () => sendReview("changes");
+    act.append(back);
+  } else if (review) {
     const back = el("button", { type: "button", className: "btn primary", textContent: "Send back for changes" });
     back.onclick = () => sendReview("changes");
     const ok = el("button", { type: "button", className: "btn", textContent: "Approve" });
@@ -1813,12 +1820,18 @@ function renderGoals() {
     const b = el("button", { type: "button", className: "btn primary", textContent: st === "building" ? "Build again" : "Build it", disabled: !goals.length });
     b.title = "Send the sketch and these goals to Claude to build";
     b.onclick = buildIt;
-    act.append(b);
+    // Asked once per sketch: whether each build also comes back with a turnaround sheet in its own tab.
+    doc.turnaround ??= settings.turnaround ?? true;
+    const ta = el("label", { className: "opt gturn", title: "Pictures of the build from every side (8 views), plus from above and below, on one sheet in a tab of its own" });
+    const cb = el("input", { type: "checkbox", checked: doc.turnaround });
+    cb.onchange = () => { doc.turnaround = settings.turnaround = cb.checked; saveSettings(); changed(); };
+    ta.append(cb, " Also send a turnaround sheet: every side, top and bottom");
+    act.append(ta, b);
   }
   $("send").textContent = review ? "Send back" : "Send to Claude";
   $("send").title = review ? "Send your review back to Claude for changes" : "Save and hand it straight to Claude";
 }
-$("goalsHead").onclick = () => { if (doc.kind === "review") return; settings.goalsShut = !settings.goalsShut; saveSettings(); renderGoals(); };
+$("goalsHead").onclick = () => { if (doc.kind === "review" || doc.kind === "sheet") return; settings.goalsShut = !settings.goalsShut; saveSettings(); renderGoals(); };
 $("goalForm").onsubmit = e => {
   e.preventDefault();
   const t = $("goalInput").value.trim(); if (!t) return;
@@ -1829,17 +1842,18 @@ $("goalInput").addEventListener("keydown", e => e.stopPropagation());
 async function buildIt() {
   const goals = goalsOf().filter(g => g.text.trim());
   if (!goals.length) return toast("Add at least one goal first.");
-  const ok = await exportSession(true, { kind: "build", goals: goals.map(g => g.text) });
+  const ok = await exportSession(true, { kind: "build", goals: goals.map(g => g.text), turnaround: doc.turnaround !== false });
   if (ok) { doc.goalsState = "building"; goalsChanged(); toast("Sent to Claude to build. The results open in a new tab beside this one.", 8000); }
 }
 async function sendReview(kind) {
-  if (doc.kind !== "review") return;
-  const goals = goalsOf();
+  if (doc.kind !== "review" && doc.kind !== "sheet") return;
+  const goals = doc.kind === "sheet" ? [] : goalsOf();
   if (kind === "changes" && !goals.some(g => g.verdict === "change") && !doc.speech.length && !doc.events.some(e => !e.build && e.type !== "point")) {
     return toast("Mark a goal “Needs a change”, or draw and talk over the pictures, so Claude knows what to fix.", 7000);
   }
   const r = doc.review || {};
-  const ok = await exportSession(true, { kind, build_of: r.session, round: r.round || 1, item: r.itemId,
+  const ok = await exportSession(true, { kind, build_of: r.session, round: r.round || 1, item: r.itemId, turnaround: r.turnaround !== false,
+    ...(doc.kind === "sheet" ? { from: "turnaround sheet" } : {}),
     goals: goals.map(g => ({ text: g.text, agent: g.agent || null, verdict: g.verdict || null, comment: g.comment || "" })) });
   if (ok) {
     doc.goalsState = kind; goalsChanged();
@@ -1895,17 +1909,26 @@ async function takeInboxItem(id) {
     if (from.id === curTab) { settings.goalsShut = false; renderGoals(); }
     return inboxDone(id);
   }
+  if (item.kind === "sheet") {   // a turnaround sheet on its own, for a build that's already open
+    const root = from ? (from.kind !== "sketch" && from.parent && tabOf(from.parent) ? tabOf(from.parent) : from) : null;
+    if (!item.sheet?.data) { toast("A turnaround sheet came back without its picture.", 6000); return inboxDone(id); }
+    await newTab(await sheetDoc(item, root, item.round || 1), { activeLayer: "l1", focus: false });
+    toast(`The turnaround sheet for build ${item.round || 1} is in a new tab.`, 7000);
+    return inboxDone(id);
+  }
   if (item.kind === "review") {
     if (!item.images?.length) { toast("A build came back without any pictures, so there's nothing to review yet.", 6000); return inboxDone(id); }
     const root = from ? (from.kind === "review" && from.parent && tabOf(from.parent) ? tabOf(from.parent) : from) : null;
     const round = item.round || (root ? tabs.filter(t => t.parent === root.id).length + 1 : 1);
-    const parentGoals = root?.id === curTab ? doc.goals : root ? (await readTab(root.id))?.doc?.goals : null;
-    const { d, notesLayer } = await reviewDoc(item, root, round, parentGoals);
+    const rootDoc = root?.id === curTab ? doc : root ? (await readTab(root.id))?.doc : null;
+    const { d, notesLayer } = await reviewDoc(item, root, round, rootDoc?.goals);
+    d.review.turnaround = rootDoc?.turnaround !== false;
     if (root) await editTab(root, x => { x.goalsState = "built"; });
     if (from && from !== root) await editTab(from, x => { x.goalsState = x.goalsState === "approved" ? x.goalsState : "changes"; });
     const idle = !speech.isRunning() && !gesture && !live && !editing && !pb && !$("save").disabled && !team && !teamStarting && $("teamDlg").hidden;
     const focus = idle && (curTab === from?.id || curTab === root?.id || !hasContent());
     await newTab(d, { activeLayer: notesLayer, focus });
+    if (item.sheet?.data) { try { await newTab(await sheetDoc(item, root, round), { activeLayer: "l1", focus: false }); } catch (e) { console.warn("turnaround sheet", e); } }
     toast(focus ? `Build ${round} is back. Check each goal on the right, draw on the pictures and talk, then Send back or Approve.`
       : `Build ${round} of “${root ? tabLabel(root) : item.title || "your sketch"}” is back, in a new tab.`, 9000);
     return inboxDone(id);
@@ -1964,6 +1987,28 @@ async function reviewDoc(item, root, round, parentGoals) {
     { type: "layer", op: "add", id: notesLayer, name: "Your notes", above: "l0", t0: 0, build: true },
   );
   return { d, notesLayer };
+}
+
+// A turnaround sheet: one picture of the build from every side, top and bottom, in a tab of its own beside the build.
+async function sheetDoc(item, root, round) {
+  const im = await loadImg(item.sheet.data);
+  const GAP = 60, TOP = 60, k = Math.min(1, (4096 - 2 * GAP) / im.naturalWidth, (4096 - TOP - GAP) / im.naturalHeight);   // the sheet carries its own title
+  const w = Math.round(im.naturalWidth * k), h = Math.round(im.naturalHeight * k);
+  const d = newDoc({ w: w + 2 * GAP, h: h + TOP + GAP });
+  d.kind = "sheet";
+  d.title = `Turnaround ${round}${root ? " of " + tabLabel(root) : ""}`.slice(0, 40);
+  d.review = { parentTab: root?.id || null, session: item.session || null, round, itemId: item.id };
+  d.goalsState = "review";
+  const base = { tf: [...I], clips: [], masks: [], erasers: [], layer: "l0" };
+  const asset = newId(d, "a"); d.assets[asset] = item.sheet.data;
+  const pieces = [{ kind: "image", source: "build", name: (item.sheet.caption || "Turnaround sheet").slice(0, 40), asset, x: 0, y: 0, w, h, ...base, tf: translate(GAP, TOP), id: newId(d) }];
+  d.events.push(
+    { type: "layer", op: "rename", id: "l0", name: "Turnaround", t0: 0, build: true },
+    { type: "addMany", pieces, t0: 0, build: true },
+    { type: "layer", op: "lock", id: "l0", value: true, t0: 0, build: true },
+    { type: "layer", op: "add", id: "l1", name: "Your notes", above: "l0", t0: 0, build: true },
+  );
+  return d;
 }
 
 // ---------------------------------------------------------------- team sessions

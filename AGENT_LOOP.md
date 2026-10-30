@@ -16,7 +16,7 @@ The last word is the request kind. The details are in `sessions/<name>/request.j
 | kind | What it means | What to do |
 |---|---|---|
 | `sketch` | A new idea, sent with Send to Claude. | Read the session, then draft a goal list (step 2). Don't build yet. |
-| `build` | The goals are confirmed (`request.goals`). | Build it (step 3). |
+| `build` | The goals are confirmed (`request.goals`); `turnaround` says whether to send a turnaround sheet too. | Build it (step 3). |
 | `changes` | A review with things to fix. `build_of` is the original session, `goals` has each goal's verdict and comment. | Read the review session, fix what is marked, and send a new build (step 3, next `round`). |
 | `approved` | The build is right. | Finish up and save the work properly; nothing goes back to the app. |
 
@@ -77,6 +77,29 @@ Put them in `inbox/<id>/` with an `item.json`:
   (a Windows path's backslashes are the usual cause). Then check it moved to `inbox/_done/`.
 
 The app checks the inbox every few seconds while it is open, opens the build as a new tab and moves the item to `inbox/_done/`.
+
+### The turnaround sheet
+
+`build` and `changes` requests carry `"turnaround": true` or `false`: whether Paddy wants a turnaround sheet with each build. He chooses
+it under Goals with "Also send a turnaround sheet". If a request has no `turnaround` field (an older app), ask him in the chat.
+
+When it's `true` and the build is a 3D model, make the sheet once the model is finished, and check it like any other render:
+
+- 8 views all the way round, every 45° (front, front 3/4, side, back 3/4, back, back 3/4, other side, front 3/4), then straight
+  down from the top and straight up from the bottom: 10 labelled views in 2 rows of 5, on white.
+- The 8 side views are orthographic, level, at the same scale and with the same lighting, so they line up for comparing.
+- For a Blender model, `agent-tools/turnaround.py` does all of it:
+  `blender -b model.blend --python agent-tools/turnaround.py -- <folder> "Name, build 1: every side, top and bottom"`
+  It writes `<folder>/turnaround.png` and never saves the .blend.
+
+Copy `turnaround.png` into the review item's folder and add it to `item.json` as
+`"sheet": { "file": "turnaround.png", "caption": "Name, build 1: every side, top and bottom" }`. The app opens it in a tab of its own
+beside the build, where Paddy can draw on it and send notes back. A `changes` request from that tab has `"from": "turnaround sheet"`.
+
+A sheet can also be sent on its own for a build that's already open: an item with `"kind": "sheet"`, the build's `session` and
+`round`, and the `sheet`.
+
+For something that isn't a model (an app screen, a document), there's no turnaround: say so in the review's `notes`.
 
 ## 4. Keeping it automatic
 
