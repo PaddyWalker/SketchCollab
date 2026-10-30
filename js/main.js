@@ -1981,6 +1981,7 @@ async function reviewDoc(item, root, round, parentGoals) {
   const CW = imgs.length === 1 ? 1600 : 1000, CH = imgs.length === 1 ? 1100 : 720, GAP = 60, CAP = 120, TOP = 130;
   const W = Math.min(4096, cols * CW + (cols + 1) * GAP), H = Math.min(4096, TOP + rows * (CH + CAP + GAP));
   const d = newDoc({ w: W, h: H });
+  d.idPrefix = "b" + Date.now().toString(36).slice(-5) + "_";   // names no other tab uses
   d.kind = "review";
   d.title = (item.title || `Build ${round}${root ? " of " + tabLabel(root) : ""}`).slice(0, 40);
   d.review = { parentTab: root?.id || null, session: item.session || null, round, itemId: item.id, summary: String(item.summary || "").slice(0, 4000),
@@ -2019,6 +2020,7 @@ async function sheetDoc(item, root, round) {
   const GAP = 60, TOP = 60, k = Math.min(1, (4096 - 2 * GAP) / im.naturalWidth, (4096 - TOP - GAP) / im.naturalHeight);   // the sheet carries its own title
   const w = Math.round(im.naturalWidth * k), h = Math.round(im.naturalHeight * k);
   const d = newDoc({ w: w + 2 * GAP, h: h + TOP + GAP });
+  d.idPrefix = "t" + Date.now().toString(36).slice(-5) + "_";
   d.kind = "sheet";
   d.title = `Turnaround ${round}${root ? " of " + tabLabel(root) : ""}`.slice(0, 40);
   d.review = { parentTab: root?.id || null, session: item.session || null, round, itemId: item.id };
@@ -2098,7 +2100,7 @@ function onTeamMessage(msg) {
     case "audio": if (!doc.audio.some(a => a.id === msg.meta.id)) { doc.audio.push(msg.meta); changed(); } fetchAudio(msg.meta.id); break;
     case "switched":   // the host moved everyone to another tab; the hello that follows carries it
       team.pending.clear(); team.lives.clear(); team.cursors.clear(); team.loaded = false;
-      if (!team.host) { stopPlayback(); if (editing) commitText(); cancelToolGesture(); redoStack = []; clearSelection(); }
+      if (!team.host) { stopPlayback(); if (editing) commitText(); cancelToolGesture(); redoStack = []; clearSelection(); doc.assets = {}; forgetImages(); }   // the new tab brings its own pictures
       toast(msg.title ? `The host moved everyone to “${msg.title}”.` : "The host moved everyone to another drawing.", 6000);
       break;
     case "ended": endTeamLocal("ended"); break;

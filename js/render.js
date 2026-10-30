@@ -27,14 +27,15 @@ export const fontCss = p => `${p.italic ? "italic " : ""}${p.bold ? 700 : 400} $
 export const paperColor = doc => PAPERS[doc.paper] || PAPERS.white;
 
 // ---------- pictures (assets) ----------
-const images = new Map();
+const images = new Map(), sources = new Map();   // sources: the picture each cached image was made from
 let onImageReady = () => {};
 export const setImageReadyHandler = fn => { onImageReady = fn; };
 export function getImage(doc, id) {
   let im = images.get(id);
-  if (!im) {
-    if (!doc.assets[id]) return null;
-    im = new Image(); im.onload = () => onImageReady(id); im.src = doc.assets[id]; images.set(id, im);
+  const url = doc.assets[id];
+  if (!im || (url && sources.get(id) !== url)) {   // a different picture under the same name (another tab's): load it afresh
+    if (!url) return null;
+    im = new Image(); im.onload = () => onImageReady(id); im.src = url; images.set(id, im); sources.set(id, url);
   }
   return im.complete && im.naturalWidth ? im : null;
 }
@@ -45,7 +46,7 @@ export async function preloadAssets(doc) {
     el.addEventListener("load", res, { once: true }); el.addEventListener("error", res, { once: true });
   })));
 }
-export const forgetImages = () => images.clear();
+export const forgetImages = () => { images.clear(); sources.clear(); };
 
 // ---------- brush helpers (lines drawn before the new ink; new lines use ink.js) ----------
 const sizeAt = (p, pr) => p.size * (p.pressureSize ? 0.3 + pr * 1.4 : 1);
