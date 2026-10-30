@@ -1560,15 +1560,17 @@ async function loadDraft(d) {
 }
 async function switchTab(id) {
   if (id === curTab || !tabOf(id)) return;
-  if (team || teamStarting) return toast("End the team session before switching tabs: everyone is drawing in this one.", 5000);
+  if (teamStarting) return toast("Wait a moment: the team session is still starting.", 4000);
   if ($("save").disabled || tabBusy) return;   // halfway through a save, or a build arriving
   if (speech.isRunning()) { await stopRec(); await sleep(500); }   // the last words can arrive just after
+  if (team && !isGuestPage) stepAway();   // the session carries on without the host until they come back to its tab
   stopPlayback(); if (editing) commitText(); cancelToolGesture();
   clearTimeout(draftTimer); await saveDraft();
   const rec = await readTab(id);
   curTab = id; delete tabOf(id).fresh;
   await loadDraft(rec?.doc ? rec : { doc: newDoc() });
-  saveTabs(); renderTabs(); renderGoals();
+  if (awayTeam && awayTeam.tab === id) { const info = awayTeam; awayTeam = null; beginTeam(info); toast("Back in the team session.", 3000); }
+  saveTabs(); renderTabs(); renderGoals(); renderPeople();
 }
 // A new tab goes to the end, or for a review, just after the sketch (and earlier reviews) it belongs to.
 async function newTab(d = newDoc(), { activeLayer: al = "l0", focus = true } = {}) {
@@ -1582,7 +1584,7 @@ async function newTab(d = newDoc(), { activeLayer: al = "l0", focus = true } = {
   return t.id;
 }
 async function closeTab(id) {
-  if (team && id === curTab) return toast("End the team session before closing its tab.", 5000);
+  if ((team && id === curTab) || awayTeam?.tab === id) return toast("End the team session before closing its tab.", 5000);
   if (id === curTab) {
     const i = tabs.findIndex(t => t.id === id), next = tabs[i + 1] || tabs[i - 1];
     if (next) await switchTab(next.id); else await newTab();
@@ -1605,7 +1607,8 @@ function renderTabs() {
     const go = el("button", { type: "button", className: "tgo", title: parent ? `A build of “${tabLabel(parent)}”` : tabLabel(t) });
     if (t.kind === "review" || t.kind === "sheet") go.append(el("span", { className: "tkind", textContent: "↳" }));
     go.append(el("span", { className: "tname", textContent: tabLabel(t) }));
-    if (STATUS_TEXT[t.status]) go.append(el("span", { className: "tstat s-" + t.status, textContent: STATUS_TEXT[t.status] }));
+    if (team?.tab === t.id || awayTeam?.tab === t.id) go.append(el("span", { className: "tstat s-team", textContent: awayTeam ? "Team, you're away" : "Team" }));
+    else if (STATUS_TEXT[t.status]) go.append(el("span", { className: "tstat s-" + t.status, textContent: STATUS_TEXT[t.status] }));
     go.onclick = () => switchTab(t.id);
     const x = el("button", { type: "button", className: "tx", title: "Close this tab", textContent: "×" });
     let armedAt = 0;
@@ -2041,6 +2044,7 @@ let team = null;   // { id, name, color, token, host, link, members, pending, cu
 
 function beginTeam(info) {
   info.clientNow ||= Date.now();   // when serverNow was true, so the clock is right again after a reload
+  if (info.host) info.tab ||= curTab;   // the tab the session is drawn in
   team = { ...info, members: info.members || [], pending: new Map(), cursors: new Map(), lives: new Map(), shared: new Set(Object.keys(doc.assets)), fails: 0, everOnline: false };
   const skew = info.serverNow - info.clientNow;
   speech.useTeamClock(() => Date.now() + skew - info.startEpoch);
@@ -2199,13 +2203,12 @@ function renderPeople() {
     box.append(chip);
   }
   if (team && !team.online) box.append(el("span", { className: "person off", textContent: "Reconnecting…" }));
-  $("invite").textContent = isGuestPage ? "Leave" : team ? "Team" : "Invite";
+  $("invite").textContent = isGuestPage ? "Leave" : team || awayTeam ? "Team" : "Invite";
 }
 // Guests can't save, send or start over: that's the host's job.
 function applyRoleUI() {
   for (const id of ["save", "send"]) $(id).hidden = isGuestPage;
   if (isGuestPage) $("invite").hidden = !team;
-  $("tabs").classList.toggle("locked", !!team);   // the team draws in this tab, so the others wait
 }
 function renderTeamDlg() {
   if ($("teamDlg").hidden) return;
@@ -2225,7 +2228,20 @@ function renderTeamDlg() {
     ul.append(li);
   }
 }
+// The host can look at other tabs during a team session. The session carries on at the server, and guests keep
+// drawing; the host's copy catches up with everything from the server on coming back to the team tab.
+let awayTeam = null;
+function stepAway() {
+  let info = null;
+  try { info = JSON.parse(sessionStorage.getItem(TEAM_KEY) || "null"); } catch (_) {}
+  awayTeam = { ...(info || {}), tab: team.tab };
+  team.link.close(); team = null;
+  speech.useTeamClock(null);
+  applyRoleUI(); renderTeamDlg(); requestRender();
+  toast("The team session carries on in its own tab while you look at this one. Go back to the tab marked Team to rejoin.", 7000);
+}
 function endTeamLocal(reason) {
+  awayTeam = null;
   if (!team) return;
   team.link.close(); team = null;
   try { sessionStorage.removeItem(TEAM_KEY); } catch (_) {}
@@ -2237,8 +2253,9 @@ function endTeamLocal(reason) {
   }
 }
 $("endedOk").onclick = () => { $("endedDlg").hidden = true; };
-$("invite").onclick = () => {
+$("invite").onclick = async () => {
   if (isGuestPage) { if (team) { team.link.close(); endTeamLocal(null); toast("You left the session."); } return; }
+  if (awayTeam) { await switchTab(awayTeam.tab); if (!team) return; }   // the Team box belongs with the session's tab
   $("teamDlg").hidden = false; $("teamErr").hidden = true;
   if (!team) { $("hostName").value = settings.myName || ""; setTimeout(() => $("hostName").focus(), 0); renderShareNote(); }
   renderTeamDlg();
@@ -2271,7 +2288,7 @@ $("teamGo").onclick = async () => {
     const r = await fetch("/api/team/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const res = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(res.error || "the server refused");
-    beginTeam({ id: res.id, name, color: res.color, token: res.token, host: true, startEpoch: res.startEpoch, serverNow: res.serverNow, url: res.url, code: res.code });
+    beginTeam({ id: res.id, name, color: res.color, token: res.token, host: true, startEpoch: res.startEpoch, serverNow: res.serverNow, url: res.url, code: res.code, tab: curTab });
     for (const a of shared) { const b = audioBlobs.get(a.id); if (b) uploadAudio(a, b); }   // so guests can play back earlier talking too, if the host chose to
     renderTeamDlg();
   } catch (e) {
@@ -2310,7 +2327,11 @@ $("joinForm").onsubmit = async e => {
 function resumeTeam() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem(TEAM_KEY) || "null"); } catch (_) {}
-  if (saved && saved.host === !isGuestPage) beginTeam(saved);
+  if (saved && !isGuestPage && saved.host) {
+    saved.tab ||= curTab;   // a session started before tabs could be left
+    if (saved.tab !== curTab && tabOf(saved.tab)) { awayTeam = saved; renderTabs(); renderPeople(); }
+    else beginTeam(saved);
+  } else if (saved && saved.host === !isGuestPage) beginTeam(saved);
   else if (isGuestPage) showJoin();
 }
 

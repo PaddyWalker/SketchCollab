@@ -84,9 +84,11 @@ Sketch and talk an idea out with up to 10 people, from anywhere.
 3. Everyone draws on the same page. You see each other's lines as they're drawn and each other's cursors with
    names. Each person presses Start talking on their own device, and their words appear in What you said
    with their name and colour. Their voice is recorded too, for playback.
-4. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
+4. You can look at your other tabs while the session runs (to check a build, say). Guests carry on in the
+   shared tab and see you as away; click the tab marked **Team**, or the **Team** button, to rejoin.
+5. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
    session (**Team** → **End session**).
-5. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.
+6. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.
 
 Good to know:
 
@@ -184,5 +186,5 @@ moves them to `inbox\_done\`.
 - The timer only runs while you're talking, so moments line up with your words. Drawing done before you
   start talking is kept as its own moment.
 - Every tab is kept in this browser as you go, so closing the window loses nothing: the tabs are all there
-  when it opens again. In a team session everyone draws in one tab, so the other tabs wait until it ends.
+  when it opens again. In a team session everyone draws in one tab, marked **Team**. As host you can still look at your other tabs: the session carries on without you, and going back to the Team tab brings you up to date.
 - The server only listens on this computer (`127.0.0.1`), and only accepts saves from the app itself.
