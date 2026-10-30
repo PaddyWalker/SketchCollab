@@ -42,6 +42,7 @@ height = hi.z - lo.z
 pivot = bpy.data.objects.new("Turntable", None)
 scene.collection.objects.link(pivot)
 pivot.location = (centre.x, centre.y, 0)
+bpy.context.view_layer.update()   # so the turntable is really at the centre before the model is attached to it
 for o in models:
     if o.parent is None:
         mw = o.matrix_world.copy()
