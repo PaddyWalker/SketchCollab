@@ -382,6 +382,11 @@ button { cursor: pointer; }
       <div class="linkbox"><code id="teamUrl"></code><button type="button" class="btn" id="copyInvite">Copy invite</button></div>
       <div>Join code <div class="bigcode" id="teamCode"></div></div>
       <ul class="mlist" id="teamMembers"></ul>
+      <div class="note" id="teamAway" hidden>
+        <p>You're looking at another tab. The team is still in <b id="teamAwayTab"></b>.</p>
+        <div class="actions"><button type="button" class="btn" id="teamBack">Go back to the team</button><button type="button" class="btn primary" id="teamShareHere">Share this tab instead</button></div>
+        <p class="muted">Sharing this tab moves everyone here. What was drawn and said in the other tab stays in it. Your earlier voice recordings in this tab aren't shared.</p>
+      </div>
       <div class="actions"><button type="button" class="btn" id="teamEnd">End session</button><button type="button" class="btn primary" id="teamClose">Done</button></div>
     </div>
   </div>

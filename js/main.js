@@ -2096,6 +2096,11 @@ function onTeamMessage(msg) {
     }
     case "liveEnd": team.lives.delete(msg.who); requestRender(); break;
     case "audio": if (!doc.audio.some(a => a.id === msg.meta.id)) { doc.audio.push(msg.meta); changed(); } fetchAudio(msg.meta.id); break;
+    case "switched":   // the host moved everyone to another tab; the hello that follows carries it
+      team.pending.clear(); team.lives.clear(); team.cursors.clear(); team.loaded = false;
+      if (!team.host) { stopPlayback(); if (editing) commitText(); cancelToolGesture(); redoStack = []; clearSelection(); }
+      toast(msg.title ? `The host moved everyone to “${msg.title}”.` : "The host moved everyone to another drawing.", 6000);
+      break;
     case "ended": endTeamLocal("ended"); break;
     case "removed": endTeamLocal("removed"); break;
   }
@@ -2212,11 +2217,14 @@ function applyRoleUI() {
 }
 function renderTeamDlg() {
   if ($("teamDlg").hidden) return;
-  $("teamStart").hidden = !!team; $("teamLive").hidden = !team;
-  if (!team) return;
-  $("teamUrl").textContent = team.url || ""; $("teamCode").textContent = team.code || "";
+  const T = team || awayTeam;
+  $("teamStart").hidden = !!T; $("teamLive").hidden = !T;
+  $("teamAway").hidden = !awayTeam;
+  if (!T) return;
+  $("teamUrl").textContent = T.url || ""; $("teamCode").textContent = T.code || "";
+  if (awayTeam) $("teamAwayTab").textContent = `“${tabLabel(tabOf(awayTeam.tab) || {})}”`;
   const ul = $("teamMembers"); ul.textContent = "";
-  for (const m of team.members) {
+  for (const m of team ? team.members : []) {
     const li = el("li"), dot = el("i", { className: "" });
     dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${m.color}`;
     li.append(dot, el("span", { textContent: `${m.name}${m.host ? " (host)" : ""}${m.online ? "" : ", away"}` }));
@@ -2255,7 +2263,6 @@ function endTeamLocal(reason) {
 $("endedOk").onclick = () => { $("endedDlg").hidden = true; };
 $("invite").onclick = async () => {
   if (isGuestPage) { if (team) { team.link.close(); endTeamLocal(null); toast("You left the session."); } return; }
-  if (awayTeam) { await switchTab(awayTeam.tab); if (!team) return; }   // the Team box belongs with the session's tab
   $("teamDlg").hidden = false; $("teamErr").hidden = true;
   if (!team) { $("hostName").value = settings.myName || ""; setTimeout(() => $("hostName").focus(), 0); renderShareNote(); }
   renderTeamDlg();
@@ -2271,20 +2278,58 @@ function renderShareNote() {
 }
 $("teamCancel").onclick = $("teamClose").onclick = () => { $("teamDlg").hidden = true; };
 $("teamDlg").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") $("teamDlg").hidden = true; });
+// A tab, ready to share: everything gets an id carrying the host's tag, so it can be shared and undone.
+function teamBody(name, shareVoice) {
+  doc.idPrefix = `h${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}_`;
+  for (const e of doc.events) { e.id ||= newId(doc, "e"); e.who ||= "h"; e.by ||= name; }
+  for (const s of doc.speech) { s.id ||= newId(doc, "s"); }
+  for (const a of doc.audio) if (!shareVoice) a.private = true; else delete a.private;
+  const shared = doc.audio.filter(a => !a.private);
+  return { shared, body: { name, base: { size0: doc.size0, paper: doc.paper, grid: doc.grid, title: doc.title, created: doc.created }, events: doc.events, speech: doc.speech, assets: doc.assets, audio: shared, clock: speech.now() } };
+}
+$("teamBack").onclick = () => { $("teamDlg").hidden = true; if (awayTeam) switchTab(awayTeam.tab); };
+// Moves the session to the tab open now. The tab being left keeps everything the team did in it, voices included.
+$("teamShareHere").onclick = async () => {
+  if (!awayTeam || tabBusy) return;
+  const btn = $("teamShareHere"); btn.disabled = true; tabBusy = true;
+  const info = awayTeam, oldTab = tabOf(info.tab);
+  try {
+    if (speech.isRunning()) await stopRec();
+    const { body } = teamBody(info.name || settings.myName || "Host", false);
+    const r = await fetch("/api/team/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(res.error || "the server refused");
+    if (oldTab) {   // the old team tab: bring it up to date with what the team did, and fetch everyone's voices
+      const rec = await readTab(oldTab.id), prev = res.previous;
+      if (rec?.doc && prev) {
+        const d = rec.doc, blobs = new Map(rec.audio || []);
+        d.events = prev.events; d.speech = prev.speech;
+        d.audio = [...(d.audio || []).filter(a => a.private && !prev.audio.some(b => b.id === a.id)), ...prev.audio];
+        for (const [id, url] of Object.entries(prev.assets || {})) if (safeAsset(url)) d.assets[id] = url;
+        d.team = prev.members?.map(m => ({ name: m.name, host: m.host })) || d.team;
+        for (const a of prev.audio) if (!blobs.has(a.id)) {
+          try { const ar = await fetch(`/api/team/audio/${encodeURIComponent(a.id)}?token=${encodeURIComponent(info.token)}`); if (ar.ok) blobs.set(a.id, await ar.blob()); } catch (_) {}
+        }
+        rec.audio = [...blobs];
+        tabInfo(oldTab, d);
+        await idbDo("readwrite", st => st.put(rec, "tab:" + oldTab.id));
+      }
+    }
+    awayTeam = null;
+    beginTeam({ ...info, tab: curTab, startEpoch: res.startEpoch, serverNow: res.serverNow, clientNow: Date.now() });
+    $("teamDlg").hidden = true; renderTabs();
+    toast(`Everyone is in “${tabLabel(tabOf(curTab))}” now. “${oldTab ? tabLabel(oldTab) : "The old tab"}” keeps what was done there.`, 7000);
+  } catch (e) {
+    toast(`Couldn't move the team to this tab: ${e.message}`, 7000);
+  } finally { btn.disabled = false; tabBusy = false; }
+};
 $("teamGo").onclick = async () => {
   const name = $("hostName").value.trim() || "Host", go = $("teamGo");
   settings.myName = name; saveSettings();
   go.disabled = true; go.textContent = "Making the secure link…"; $("teamErr").hidden = true; teamStarting = true;
   try {
     if (speech.isRunning()) await stopRec();
-    // Everything so far gets an id (carrying the host's tag), so it can be shared and undone.
-    doc.idPrefix = `h${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}_`;
-    for (const e of doc.events) { e.id ||= newId(doc, "e"); e.who ||= "h"; e.by ||= name; }
-    for (const s of doc.speech) { s.id ||= newId(doc, "s"); }
-    const shareVoice = $("shareVoice").checked;
-    for (const a of doc.audio) if (!shareVoice) a.private = true; else delete a.private;
-    const shared = doc.audio.filter(a => !a.private);
-    const body = { name, base: { size0: doc.size0, paper: doc.paper, grid: doc.grid, title: doc.title, created: doc.created }, events: doc.events, speech: doc.speech, assets: doc.assets, audio: shared, clock: speech.now() };
+    const { shared, body } = teamBody(name, $("shareVoice").checked);
     const r = await fetch("/api/team/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const res = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(res.error || "the server refused");

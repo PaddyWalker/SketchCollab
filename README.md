@@ -86,6 +86,8 @@ Sketch and talk an idea out with up to 10 people, from anywhere.
    with their name and colour. Their voice is recorded too, for playback.
 4. You can look at your other tabs while the session runs (to check a build, say). Guests carry on in the
    shared tab and see you as away; click the tab marked **Team**, or the **Team** button, to rejoin.
+   To show everyone a different tab instead, open that tab and press **Team** → **Share this tab instead**. Everyone
+   moves to it, and the tab you left keeps everything that was drawn and said there, everyone's voices included.
 5. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
    session (**Team** → **End session**).
 6. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.

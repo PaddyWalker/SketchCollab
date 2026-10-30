@@ -233,21 +233,25 @@ class Room:
 
     def __init__(self, base, events, speech, assets, audio, clock_ms):
         self.code = self.new_code()
+        self.audio_data = {}                               # id -> (mime, bytes), kept for every tab shared in this session
+        self.members = {}                                  # id -> {id, name, color, token, online, host, ...}
+        self.conns = {}                                    # id -> WsConn
+        self.lock = threading.RLock()
+        self.next_guest = 1
+        self.fails, self.join_attempts = 0, {}
+        self.load(base, events, speech, assets, audio, clock_ms)
+
+    def load(self, base, events, speech, assets, audio, clock_ms):
+        """What everyone is drawing in: the host's tab when the session starts, or another tab the host shares later."""
         self.start_epoch = time.time() * 1000 - clock_ms   # the shared clock carries on from the host's
         self.base = base if isinstance(base, dict) else {}
         self.events = list(events)
         self.speech = list(speech)
         self.assets = {k: v for k, v in dict(assets).items() if isinstance(v, str)}
         self.audio = list(audio)
-        self.audio_data = {}                               # id -> (mime, bytes)
-        self.members = {}                                  # id -> {id, name, color, token, online, host, ...}
-        self.conns = {}                                    # id -> WsConn
-        self.lock = threading.RLock()
-        self.next_guest = 1
         self.ids = {e.get("id") for e in self.events} | {s.get("id") for s in self.speech}
         for e in self.events:
             self.ids.update(new_ids(e))
-        self.fails, self.join_attempts = 0, {}
         self.guest_bytes = 0
 
     @staticmethod
@@ -596,6 +600,27 @@ class Handler(BaseHTTPRequestHandler):
                     host = ROOM.members["h"]
                     return self._reply(200, {"url": TUNNEL.url, "code": ROOM.code, "id": host["id"], "token": host["token"], "name": host["name"],
                                              "color": host["color"], "startEpoch": ROOM.start_epoch, "serverNow": time.time() * 1000})
+            if path == "/api/team/switch":
+                # The host puts another tab in front of everyone. The answer holds everything from the tab being
+                # left, so the host's app can keep it; then each person gets the new tab, as if they'd just joined.
+                room = ROOM
+                if not self.host_post_ok() or not room:
+                    return self._reply(403, {"error": "only the host can change the shared tab"})
+                data = self._body()
+                with room.lock:
+                    previous = room.snapshot()
+                    room.load(data.get("base") or {}, data.get("events") or [], data.get("speech") or [],
+                              data.get("assets") or {}, data.get("audio") or [], float(data.get("clock") or 0))
+                    conns = list(room.conns.items())
+                for mid, c in conns:
+                    m = room.members.get(mid)
+                    if not m:
+                        continue
+                    c.send(json.dumps({"t": "switched", "title": str(room.base.get("title") or "")[:40]}))
+                    c.send(json.dumps({"t": "hello", "you": {k: m[k] for k in ("id", "name", "color", "host")},
+                                       "state": room.snapshot(), "serverNow": time.time() * 1000}))
+                print("  Team session moved to another tab")
+                return self._reply(200, {"ok": True, "previous": previous, "startEpoch": room.start_epoch, "serverNow": time.time() * 1000})
             if path == "/api/team/end":
                 if not self.host_post_ok():
                     return self._reply(403, {"error": "only the host can end the session"})
