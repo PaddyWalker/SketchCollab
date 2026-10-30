@@ -51,12 +51,12 @@ MEMBER_ASSET_BYTES, MEMBER_AUDIO_BYTES, AUDIO_UPLOAD = 40 * 2**20, 60 * 2**20, 2
 MEMBER_EVENT_BYTES = 30 * 2**20        # one guest's drawing and words, all together
 ROOM_GUEST_BYTES = 400 * 2**20         # everything all guests together may leave in this computer's memory
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
-FILE_RE = re.compile(r"^((moments|layers|assets|audio)/)?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}$")
+FILE_RE = re.compile(r"^((moments|layers|pages|assets|audio)/)?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_]{1,60}$")
 ASSET_RE = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$")
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 AUDIO_TYPES = {"audio/webm", "audio/mp4", "audio/ogg"}
-EVENT_TYPES = {"add", "addMany", "batch", "erase", "tf", "delete", "cut", "text", "setLayer", "order", "layer", "canvas", "point"}
+EVENT_TYPES = {"add", "addMany", "batch", "erase", "tf", "delete", "cut", "text", "setLayer", "order", "layer", "canvas", "point", "page"}
 COLORS = ["#2563d6", "#d43d33", "#23935a", "#e5892a", "#7b4bc4", "#e56aa6", "#0f8f8f", "#a35a1f", "#5a6373", "#c9a400"]
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 APP_FILES = {"/": "index.html", "/index.html": "index.html"}
@@ -177,6 +177,8 @@ def new_ids(ev):
         out += [c.get("newId") for c in ev.get("cuts") or [] if isinstance(c, dict)]
     elif t == "layer" and ev.get("op") == "add":
         out.append(ev.get("id"))
+    elif t == "page" and ev.get("op") == "add":   # a new page and its first layer
+        out += [ev.get("page"), ev.get("layer")]
     elif t == "batch":
         for e in ev.get("events") or []:
             if isinstance(e, dict):
@@ -328,6 +330,9 @@ class Room:
             if not self.allowed(member, "quick"):
                 return
             out = {"t": t, "who": mid}
+            page = msg.get("page")
+            if isinstance(page, str) and ID_RE.match(page):
+                out["page"] = page                      # which page this person is on
             if t == "cursor":
                 x, y = msg.get("x"), msg.get("y")
                 out.update(x=x if isinstance(x, (int, float)) else None, y=y if isinstance(y, (int, float)) else None)
@@ -379,6 +384,9 @@ class Room:
             seg = {"id": seg["id"], "t0": seg.get("t0") if isinstance(seg.get("t0"), (int, float)) else 0,
                    "t1": seg.get("t1") if isinstance(seg.get("t1"), (int, float)) else 0, "text": seg["text"][:2000],
                    "src": "typed" if seg.get("src") == "typed" else "said", "who": mid, "by": name, "color": member["color"]}
+            page = msg["seg"].get("page")
+            if isinstance(page, str) and ID_RE.match(page):
+                seg["page"] = page                          # the page the speaker was on
             with self.lock:
                 if len(self.speech) >= MAX_SPEECH or not self.take_bytes(member, "event_bytes", len(seg["text"]) + 200, MEMBER_EVENT_BYTES):
                     return
@@ -785,7 +793,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             folder.mkdir(parents=True, exist_ok=True)
             # A re-save replaces the pictures, so none are left over from the last save.
-            for sub in ("moments", "layers", "assets", "audio"):
+            for sub in ("moments", "layers", "pages", "assets", "audio"):
                 shutil.rmtree(folder / sub, ignore_errors=True)
             for f in files:
                 target = folder / f["path"]

@@ -109,6 +109,13 @@ button { cursor: pointer; }
 .zoombar { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px; box-shadow: 0 4px 14px rgb(0 0 0 / .12); }
 .zoombar button { border: 0; background: transparent; border-radius: 6px; padding: 4px 8px; font-weight: 700; }
 .zoombar button:hover { background: var(--surface-2); }
+.pagebar { position: absolute; left: 12px; bottom: 12px; right: 310px; display: flex; gap: 4px; align-items: center; overflow-x: auto; scrollbar-width: thin; }
+.pagebar .pg { flex: none; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 5px 10px; font-weight: 700; color: var(--muted); box-shadow: 0 3px 10px rgb(0 0 0 / .1); }
+.pagebar .pg.on { color: var(--fg); border-color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent), 0 3px 10px rgb(0 0 0 / .1); }
+.pagebar .pg.add { color: var(--accent); }
+.pagebar .pg i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.pagebar .pg input { width: 9em; font: inherit; border: 0; outline: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; background: var(--surface-2); color: var(--fg); }
+@media (max-width: 700px) { .pagebar { right: 12px; bottom: 60px; } }
 #zoomLabel { font: 500 12px var(--font-mono); min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
 .playbar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 6px 8px 6px 14px; box-shadow: 0 6px 20px rgb(0 0 0 / .25); z-index: 4; }
 .playbar span { font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -318,6 +325,7 @@ button { cursor: pointer; }
       <textarea id="textEditor" spellcheck="true" hidden></textarea>
       <div class="hint" id="hint"><b>Draw here and talk</b>Press Start talking and explain as you go. Rest the mouse on something to point at it. Paste or drop pictures to bring them in.</div>
       <div class="playbar" id="playbar" hidden><span id="playTime">00:00</span><progress id="playProg" max="1" value="0"></progress><button id="playStop">Stop</button></div>
+      <div class="pagebar" id="pagebar" aria-label="Pages"></div>
       <div class="zoombar">
         <button id="pageBtn" title="Drawing size and paper">1920 × 1080</button>
         <button id="zoomOut" title="Zoom out (Ctrl -)">−</button>

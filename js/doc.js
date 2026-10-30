@@ -1,6 +1,9 @@
 // The drawing is a list of events. The current picture is what you get by playing them in order,
 // which is what makes exact playback, undo and the moment pictures possible.
 //
+// A tab can hold several pages, each its own sheet of paper. A page is a group of layers: every layer belongs to
+// one page (page "pg0" unless it says otherwise), so pieces belong to the page of their layer.
+//
 // A piece is one thing on a layer: a stroke, shape, text, picture, fill or gradient. Each piece has a
 // transform (tf), optional clips (keep only inside) and masks (cut away), and erasers (strokes that
 // rub parts out). Clips, masks and erasers are stored in the piece's own coordinates, so they move
@@ -24,7 +27,8 @@ export const newId = (doc, prefix = "p") => prefix + (doc.idPrefix || "") + doc.
 export function initialState(doc) {
   return {
     size: { ...doc.size0 },
-    layers: [{ id: "l0", name: "Layer 1", visible: true, locked: false, opacity: 1 }],
+    pages: [{ id: "pg0", name: "Page 1" }],
+    layers: [{ id: "l0", name: "Layer 1", visible: true, locked: false, opacity: 1, page: "pg0" }],
     pieces: new Map(),
     order: { l0: [] },
   };
@@ -106,6 +110,7 @@ export function apply(state, ev) {
       }
       break;
     case "layer": applyLayer(state, ev, out); break;
+    case "page": applyPage(state, ev, out); break;
     case "canvas": {
       const w = Math.max(100, Math.min(4096, Math.round(+ev.w) || state.size.w)), h = Math.max(100, Math.min(4096, Math.round(+ev.h) || state.size.h));
       const dx = ev.anchor === "center" ? (w - state.size.w) / 2 : 0, dy = ev.anchor === "center" ? (h - state.size.h) / 2 : 0;
@@ -126,12 +131,13 @@ function applyLayer(state, ev, out) {
     case "add": {
       if (L.length >= 100 || state.order[ev.id]) break;   // at most 100 layers, and never two with one id
       const at = ev.above ? L.findIndex(l => l.id === ev.above) + 1 : L.length;
-      L.splice(at > 0 ? at : L.length, 0, { id: ev.id, name: ev.name, visible: true, locked: false, opacity: 1 });
+      const page = state.pages.some(p => p.id === ev.page) ? ev.page : state.pages.some(p => p.id === L[at - 1]?.page) ? L[at - 1].page : state.pages[0].id;
+      L.splice(at > 0 ? at : L.length, 0, { id: ev.id, name: ev.name, visible: true, locked: false, opacity: 1, page });
       state.order[ev.id] = [];
       break;
     }
     case "delete":
-      if (i < 0 || L.length < 2) break;
+      if (i < 0 || L.filter(l => l.page === L[i].page).length < 2) break;   // every page keeps at least one layer
       for (const id of state.order[ev.id]) state.pieces.delete(id);
       delete state.order[ev.id]; L.splice(i, 1);
       break;
@@ -146,6 +152,25 @@ function applyLayer(state, ev, out) {
     }
   }
 }
+
+// Pages: add (with its first layer), rename, delete (with its layers and everything on them).
+function applyPage(state, ev, out) {
+  const P = state.pages, i = P.findIndex(p => p.id === ev.page);
+  out.layersChanged = true;
+  if (ev.op === "add") {
+    if (i >= 0 || P.length >= 40 || !ev.layer || state.order[ev.layer]) return;
+    P.push({ id: ev.page, name: String(ev.name || `Page ${P.length + 1}`).slice(0, 40) });
+    state.layers.push({ id: ev.layer, name: ev.layerName || "Layer 1", visible: true, locked: false, opacity: 1, page: ev.page });
+    state.order[ev.layer] = [];
+  } else if (ev.op === "rename" && i >= 0) P[i].name = String(ev.name || P[i].name).slice(0, 40);
+  else if (ev.op === "delete" && i >= 0 && P.length > 1) {
+    for (const L of state.layers.filter(l => l.page === ev.page)) { for (const id of state.order[L.id]) state.pieces.delete(id); delete state.order[L.id]; }
+    state.layers = state.layers.filter(l => l.page !== ev.page);
+    P.splice(i, 1);
+  }
+}
+export const pageOfLayer = (state, layerId) => state.layers.find(l => l.id === layerId)?.page || state.pages[0].id;
+export const pageName = (state, id) => state.pages.find(p => p.id === id)?.name || "Page 1";
 
 export function replay(doc, upto = doc.events.length) {
   const s = initialState(doc);

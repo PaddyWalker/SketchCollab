@@ -192,7 +192,8 @@ export function renderLayer(ctx, state, layerId, doc, opts = {}) {
   }
 }
 let layerTmp = null;
-// The whole picture as one canvas. opts.paper (default true), opts.pieceOpts(piece) for fading and glows.
+// The whole picture as one canvas. opts.paper (default true), opts.pieceOpts(piece) for fading and glows,
+// opts.page for just one page (layers of other pages are left out).
 export function renderComposite(state, doc, opts = {}) {
   const { w, h } = state.size, out = makeCanvas(w, h), x = out.getContext("2d");
   if (opts.paper !== false) { x.fillStyle = paperColor(doc); x.fillRect(0, 0, w, h); }
@@ -200,6 +201,7 @@ export function renderComposite(state, doc, opts = {}) {
   const lx = layerTmp.getContext("2d");
   for (const L of state.layers) {
     if (!L.visible && !opts.allLayers) continue;
+    if (opts.page && (L.page || "pg0") !== opts.page) continue;
     renderLayer(lx, state, L.id, doc, opts);
     x.globalAlpha = L.opacity; x.drawImage(layerTmp, 0, 0); x.globalAlpha = 1;
   }

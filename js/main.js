@@ -59,6 +59,11 @@ function armed(btn, label, action) {
 const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids); return e; };
 const typing = t => t && t.closest && t.closest("input, textarea, select, [contenteditable=true], [contenteditable='']");
 const layerOf = id => state.layers.find(l => l.id === id);
+// Pages: each tab can have several, and everyone looks at one at a time (in a team, each person their own).
+let curPage = "pg0";
+const onPage = L => (L.page || "pg0") === curPage;
+const shown = L => L.visible && onPage(L);
+const pageLayers = () => state.layers.filter(onPage);
 const pad2 = n => String(n).padStart(2, "0");
 
 // ---------------------------------------------------------------- view
@@ -127,7 +132,7 @@ function draw() {
   if (pb) drawPlayback(c);
   else {
     for (const L of state.layers) {
-      if (!L.visible) continue;
+      if (!shown(L)) continue;
       c.globalAlpha = L.opacity;
       const cv = eraseWork && eraseWork.layer === L.id ? eraseWork.canvas : layerCanvas.get(L.id);
       if (cv) c.drawImage(cv, 0, 0);
@@ -139,7 +144,7 @@ function draw() {
       c.globalAlpha = 1;
     }
     if (floating) { c.save(); c.transform(...floating.m); c.drawImage(floating.canvas, 0, 0); c.restore(); }
-    if (team) for (const lv of team.lives.values()) if (lv.props && lv.pts.length) drawInk(c, lv.props, lv.pts, false);   // others' lines as they draw them
+    if (team) for (const lv of team.lives.values()) if (lv.props && lv.pts.length && (lv.page || "pg0") === curPage) drawInk(c, lv.props, lv.pts, false);   // others' lines as they draw them, on this page
   }
   c.restore();
   drawOverlay(c);
@@ -163,6 +168,7 @@ setImageReadyHandler(() => { redrawAll(); });
 // ---------------------------------------------------------------- events, undo
 function commit(ev) {
   if (ev.t0 === undefined) ev.t0 = speech.now();
+  ev.page ||= curPage;
   if (team) { ev.id ||= newId(doc, "e"); ev.who = team.id; ev.by = team.name; }
   doc.events.push(ev);
   if (ev.type !== "point") { redoStack = []; speech.step(1000); }   // while not talking, each action moves the clock on a little
@@ -182,14 +188,19 @@ function afterApply(res) {
     const cv = layerCanvas.get(res.append.layer), p = state.pieces.get(res.append.id);
     if (cv && p) { const x = cv.getContext("2d"); x.setTransform(1, 0, 0, 1, 0, 0); renderPiece(x, p, doc, state.size); }
   } else res.layers.forEach(redrawLayer);
-  if (res.layersChanged) { if (!state.order[activeLayer]) activeLayer = state.layers[state.layers.length - 1].id; renderLayers(); }
+  if (res.layersChanged) { fixPage(); renderLayers(); renderPages(); }
   pruneSelection(); updateZoomLabel(); requestRender();
 }
 function rebuild() {
   state = replay(doc);
-  if (!state.order[activeLayer]) activeLayer = state.layers[state.layers.length - 1].id;
+  fixPage();
   sel = blankSel(); hiddenIds = null; floating = null;
-  redrawAll(); renderLayers(); renderOptions(); updateZoomLabel();
+  redrawAll(); renderLayers(); renderPages(); renderOptions(); updateZoomLabel();
+}
+// The page shown still exists and the active layer is on it (after an undo, a page deleted by someone else, a reload).
+function fixPage() {
+  if (!state.pages.some(p => p.id === curPage)) curPage = state.pages[0].id;
+  if (!state.order[activeLayer] || !onPage(layerOf(activeLayer))) activeLayer = pageLayers().at(-1)?.id || state.layers.at(-1).id;
 }
 // In a team session, undo only takes back your own changes.
 const mine = e => !team || (e.who ?? "h") === team.id;
@@ -240,7 +251,7 @@ function topHit(x, y) {
   const tol = 6 / V.z, act = layerOf(activeLayer);
   const order = [act, ...[...state.layers].reverse().filter(L => L !== act)];
   for (const L of order) {
-    if (!L || !L.visible || L.locked) continue;
+    if (!L || !shown(L) || L.locked) continue;
     const ids = state.order[L.id];
     for (let i = ids.length - 1; i >= 0; i--) { const p = state.pieces.get(ids[i]); if (p && hitTest(p, x, y, tol) && bitmapHit(p, x, y)) return p; }
   }
@@ -570,7 +581,7 @@ const tools = {
         if ((b.x1 - b.x0) * V.z > 4 || (b.y1 - b.y0) * V.z > 4) {
           if (!drag.add) sel = blankSel();
           for (const L of state.layers) {
-            if (!L.visible || L.locked) continue;
+            if (!shown(L) || L.locked) continue;
             for (const id of state.order[L.id]) { const bb = docBox(state.pieces.get(id)); if (bb && bb.x0 >= b.x0 && bb.x1 <= b.x1 && bb.y0 >= b.y0 && bb.y1 <= b.y1) sel.ids.add(id); }
           }
           renderOptions();
@@ -628,7 +639,7 @@ const tools = {
       const { w, h } = state.size, x = Math.floor(c.x), y = Math.floor(c.y);
       if (x < 0 || y < 0 || x >= w || y >= h) return;
       let src;
-      if (settings.bucketAll) src = renderComposite(state, doc);
+      if (settings.bucketAll) src = renderComposite(state, doc, { page: curPage });
       else { src = makeCanvas(w, h); renderLayer(src.getContext("2d"), state, activeLayer, doc); }
       const data = src.getContext("2d").getImageData(0, 0, w, h).data;
       const mask = dilate(floodMask(data, w, h, x, y, settings.bucketTol), w, h, 2);
@@ -682,7 +693,7 @@ const tools = {
     down(c) {
       const x = Math.floor(c.x), y = Math.floor(c.y);
       if (x < 0 || y < 0 || x >= state.size.w || y >= state.size.h) return;
-      const d = renderComposite(state, doc).getContext("2d").getImageData(x, y, 1, 1).data;
+      const d = renderComposite(state, doc, { page: curPage }).getContext("2d").getImageData(x, y, 1, 1).data;
       setColor("primary", rgbToHex(d[0], d[1], d[2]));
       toast(`Picked ${rgbToHex(d[0], d[1], d[2])}.`, 1800);
     },
@@ -1204,7 +1215,7 @@ function renderOptions() {
       o.append(btn("Bring to front", () => { ensureCut(); commit({ type: "order", ids: [...sel.ids], dir: "front" }); }));
       o.append(btn("Send to back", () => { ensureCut(); commit({ type: "order", ids: [...sel.ids], dir: "back" }); }));
       const s = el("select"); s.append(el("option", { value: "", textContent: "Move to layer…" }));
-      [...state.layers].reverse().forEach(L => s.append(el("option", { value: L.id, textContent: L.name })));
+      [...pageLayers()].reverse().forEach(L => s.append(el("option", { value: L.id, textContent: L.name })));
       s.onchange = () => { if (!s.value) return; ensureCut(); commit({ type: "setLayer", ids: [...sel.ids], layer: s.value }); setActiveLayer(s.value); renderOptions(); };
       o.append(optLabel("", s));
       o.append(btn("Duplicate", () => { copySelection(); pastePieces(); }), btn("Delete", deleteSelection), btn("Deselect", clearSelection));
@@ -1240,7 +1251,7 @@ const EYE = '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-
 const LOCK = '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
 function renderLayers() {
   const ol = $("layerList"); ol.textContent = "";
-  for (const L of [...state.layers].reverse()) {
+  for (const L of [...pageLayers()].reverse()) {
     const li = el("li", { className: "lrow" + (L.id === activeLayer ? " active" : "") });
     const eye = el("button", { className: "ib", type: "button", title: L.visible ? "Hide layer" : "Show layer", innerHTML: EYE });
     if (!L.visible) eye.firstChild.classList.add("off");
@@ -1269,10 +1280,10 @@ function renderLayers() {
   }
 }
 function nextLayerName() { const n = state.layers.map(l => +(/^Layer (\d+)$/.exec(l.name)?.[1] || 0)); return `Layer ${Math.max(state.layers.length, ...n) + 1}`; }
-$("layerAdd").onclick = () => { const id = newId(doc, "l"); commit({ type: "layer", op: "add", id, name: nextLayerName(), above: activeLayer }); activeLayer = id; renderLayers(); };
+$("layerAdd").onclick = () => { const id = newId(doc, "l"); commit({ type: "layer", op: "add", id, name: nextLayerName(), above: activeLayer, page: curPage }); activeLayer = id; renderLayers(); };
 $("layerUp").onclick = () => commit({ type: "layer", op: "move", id: activeLayer, dir: 1 });
 $("layerDown").onclick = () => commit({ type: "layer", op: "move", id: activeLayer, dir: -1 });
-$("layerDel").onclick = () => { if (state.layers.length < 2) return toast("A drawing needs at least one layer."); commit({ type: "layer", op: "delete", id: activeLayer }); toast("Layer deleted. Ctrl+Z brings it back.", 2500); };
+$("layerDel").onclick = () => { if (pageLayers().length < 2) return toast("A page needs at least one layer."); commit({ type: "layer", op: "delete", id: activeLayer }); toast("Layer deleted. Ctrl+Z brings it back.", 2500); };
 
 // ---------------------------------------------------------------- timeline panel
 const PLAY = '<svg viewBox="0 0 12 12"><path d="M3 1.5l7.5 4.5L3 10.5z"/></svg>';
@@ -1320,6 +1331,7 @@ function renderTimeline() {
   if (!pb) ol.scrollTop = ol.scrollHeight;
 }
 function addSegment(seg) {
+  seg.page ||= curPage;
   if (team) { seg.id ||= newId(doc, "s"); seg.who = team.id; seg.by = team.name; seg.color = team.color; team.link.send({ t: "speech", seg }); }
   insertSegment(seg);
 }
@@ -1383,7 +1395,9 @@ function playRange(from, to) {
   const st = initialState(doc);
   for (const ev of doc.events) if ((ev.t0 ?? 0) < from) apply(st, ev);
   const queue = doc.events.filter(ev => (ev.t0 ?? 0) >= from).sort((a, b) => (a.t0 ?? 0) - (b.t0 ?? 0));
-  pb = { from, to, st, queue, qi: 0, pending: [], marks: [], comp: renderComposite(st, doc, { paper: false }), wall: performance.now(), T: from, audios: [] };
+  const startPage = queue[0]?.page || curPage;
+  if (startPage !== curPage && st.pages.some(p => p.id === startPage)) setPage(startPage, true);
+  pb = { from, to, st, queue, qi: 0, pending: [], marks: [], comp: renderComposite(st, doc, { paper: false, page: curPage }), wall: performance.now(), T: from, audios: [] };
   for (const a of doc.audio) if (audioBlobs.has(a.id) && a.t0 < to && a.t0 + a.dur > from) {
     const url = URL.createObjectURL(audioBlobs.get(a.id));
     pb.audios.push({ a, url, au: new Audio(url), started: false });
@@ -1406,12 +1420,13 @@ function tickPlayback() {
   while (pb.qi < pb.queue.length && (pb.queue[pb.qi].t0 ?? 0) <= T) {
     const ev = pb.queue[pb.qi++];
     flush(ev.t0 ?? 0);
+    if (ev.page && ev.page !== curPage && pb.st.pages.some(p => p.id === ev.page)) { setPage(ev.page, true); dirtyComp = true; }   // follow the action to its page
     if (ev.type === "add" && ev.piece.kind === "stroke" && (ev.t1 ?? 0) > T) pb.pending.push(ev);
     else if (ev.type === "point") pb.marks.push(ev);
     else { apply(pb.st, ev); dirtyComp = true; }
   }
   flush(T);
-  if (dirtyComp) pb.comp = renderComposite(pb.st, doc, { paper: false });
+  if (dirtyComp) pb.comp = renderComposite(pb.st, doc, { paper: false, page: curPage });
   $("playTime").textContent = `${fmt(T)} / ${fmt(pb.to)}`;
   $("playProg").value = clamp((T - pb.from) / Math.max(1, pb.to - pb.from), 0, 1);
   document.querySelectorAll("#timeline li[data-t]").forEach(li => li.classList.toggle("playing", +li.dataset.t <= T && +li.dataset.t >= pb.from));
@@ -1421,8 +1436,8 @@ function tickPlayback() {
 }
 function drawPlayback(c) {
   c.drawImage(pb.comp, 0, 0);
-  for (const ev of pb.pending) { const L = pb.st.layers.find(l => l.id === ev.piece.layer); if (!L || L.visible) renderPiece(c, ev.piece, doc, pb.st.size, { limitT: pb.T, alpha: L?.opacity ?? 1 }); }
-  for (const ev of pb.marks) { const age = pb.T - (ev.t1 ?? ev.t0); if (age < 1600) { c.save(); c.globalAlpha = 1 - age / 1600; drawPointing(c, ev.pts.filter(q => q[3] === undefined || q[3] <= pb.T)); c.restore(); } }
+  for (const ev of pb.pending) { const L = pb.st.layers.find(l => l.id === ev.piece.layer); if (!L || (L.visible && onPage(L))) renderPiece(c, ev.piece, doc, pb.st.size, { limitT: pb.T, alpha: L?.opacity ?? 1 }); }
+  for (const ev of pb.marks) { if ((ev.page || "pg0") !== curPage) continue; const age = pb.T - (ev.t1 ?? ev.t0); if (age < 1600) { c.save(); c.globalAlpha = 1 - age / 1600; drawPointing(c, ev.pts.filter(q => q[3] === undefined || q[3] <= pb.T)); c.restore(); } }
 }
 function stopPlayback() {
   if (!pb) return;
@@ -1527,7 +1542,7 @@ async function saveTabs() { try { await idbDo("readwrite", st => st.put({ list: 
 async function saveDraft() {
   if (!curTab || isGuestPage) return;
   const t = tabOf(curTab); if (t) { tabInfo(t, doc); renderTabs(); }
-  try { await idbDo("readwrite", st => { st.put({ doc, clock: speech.now(), audio: [...audioBlobs], activeLayer }, "tab:" + curTab); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
+  try { await idbDo("readwrite", st => { st.put({ doc, clock: speech.now(), audio: [...audioBlobs], activeLayer, page: curPage }, "tab:" + curTab); st.put({ list: tabs, active: curTab }, TABS_KEY); }); } catch (_) {}
 }
 async function openTabs() {
   let updated = false;
@@ -1552,10 +1567,10 @@ async function openTabs() {
 async function loadDraft(d) {
   if (speech.isRunning()) await stopRec();
   stopPlayback(); if (editing) commitText(); cancelToolGesture();
-  doc = d.doc; speech.setClock(d.clock || 0); audioBlobs = new Map(d.audio || []); activeLayer = d.activeLayer || "l0";
+  doc = d.doc; speech.setClock(d.clock || 0); audioBlobs = new Map(d.audio || []); activeLayer = d.activeLayer || "l0"; curPage = d.page || "pg0";
   redoStack = []; maskData.clear();
   forgetImages(); await preloadAssets(doc);
-  rebuild(); fit(); renderTimeline();
+  rebuild(); fit(); renderTimeline(); renderPages();
   $("title").value = doc.title || ""; $("clock").textContent = fmt(speech.now()); $("hint").hidden = hasContent();
   dirty = false;
 }
@@ -1615,7 +1630,6 @@ function renderTabs() {
     let armedAt = 0;
     x.onclick = e => {
       e.stopPropagation();
-      if (t.id === curTab && !hasContent() && tabs.length === 1) return;
       const empty = t.id === curTab ? !hasContent() : false;
       if (!empty && performance.now() - armedAt > 2500) { armedAt = performance.now(); x.textContent = "Close?"; x.classList.add("armed"); setTimeout(() => { x.textContent = "×"; x.classList.remove("armed"); }, 2500); return; }
       closeTab(t.id);
@@ -1712,7 +1726,8 @@ async function exportSession(send, request = null) {
       dirty = false; return true;
     }
     const files = [{ path: "transcript.md", text: wordsText(doc, state, moments, len, true) }];
-    files.push({ path: "final.png", base64: b64(renderComposite(state, doc)) }, { path: "storyboard.png", base64: b64(story) });
+    files.push({ path: "final.png", base64: b64(allPagesCanvas()) }, { path: "storyboard.png", base64: b64(story) });
+    if (state.pages.length > 1) state.pages.forEach((P, i) => files.push({ path: `pages/${pad2(i + 1)}.png`, base64: b64(renderComposite(state, doc, { page: P.id })) }));
     imgs.forEach((c, i) => files.push({ path: `moments/${pad2(i + 1)}.png`, base64: b64(c) }));
     state.layers.forEach((L, i) => { const cv = makeCanvas(state.size.w, state.size.h); renderLayer(cv.getContext("2d"), state, L.id, doc); files.push({ path: `layers/${pad2(i + 1)}.png`, base64: b64(cv) }); });
     const assets = {};
@@ -2038,6 +2053,77 @@ async function sheetDoc(item, root, round) {
   return d;
 }
 
+// The finished drawing: one page as it is, or every page side by side with its name.
+function allPagesCanvas() {
+  if (state.pages.length < 2) return renderComposite(state, doc);
+  const { w, h } = state.size, G = 40, HEAD = 70, cols = Math.min(state.pages.length, 3), rows = Math.ceil(state.pages.length / cols);
+  const k = Math.min(1, 4096 / (cols * (w + G) + G), 4096 / (rows * (h + HEAD + G) + G));
+  const c = makeCanvas(Math.round((cols * (w + G) + G) * k), Math.round((rows * (h + HEAD + G) + G) * k)), x = c.getContext("2d");
+  x.scale(k, k); x.fillStyle = "#e9ecf2"; x.fillRect(0, 0, c.width / k, c.height / k);
+  state.pages.forEach((P, i) => {
+    const cx = G + (i % cols) * (w + G), cy = G + Math.floor(i / cols) * (h + HEAD + G);
+    x.fillStyle = "#1a1e27"; x.font = '800 44px "Bricolage Grotesque", "Segoe UI", sans-serif'; x.fillText(P.name, cx, cy + 48);
+    x.drawImage(renderComposite(state, doc, { page: P.id }), cx, cy + HEAD);
+  });
+  return c;
+}
+// ---------------------------------------------------------------- pages inside a tab
+// Each page is its own sheet of paper. Everything drawn, pointed at and said is marked with its page, so the notes
+// for Claude say where each part happened, and people in a team session can split up across pages.
+function setPage(id, quiet = false) {
+  if (!state.pages.some(p => p.id === id) || id === curPage) return;
+  if (!quiet) { stopPlayback(); if (editing) commitText(); cancelToolGesture(); }
+  curPage = id; sel = blankSel(); fixPage();
+  renderLayers(); renderOptions(); renderPages(); renderPeople(); requestRender();
+  if (team) team.link.send({ t: "cursor", x: null, y: null, page: curPage }, false);   // tell the others where you are
+  if (!quiet) changed();
+}
+function renderPages() {
+  const bar = $("pagebar"); bar.textContent = "";
+  for (const P of state.pages) {
+    const b = el("button", { type: "button", className: "pg" + (P.id === curPage ? " on" : ""), title: "Click to open; double-click to rename" });
+    b.append(P.name);
+    if (team) for (const m of team.members) {   // a dot for each person on that page
+      const pg = m.id === team.id ? curPage : team.pageOf.get(m.id);
+      if (m.online && (pg || "pg0") === P.id) { const d = el("i", { title: m.name }); d.style.background = m.color; b.append(d); }
+    }
+    b.onclick = () => setPage(P.id);
+    b.ondblclick = () => {
+      const i = el("input", { value: P.name, maxLength: 40 }); b.textContent = ""; b.append(i); i.focus(); i.select();
+      const done = ok => { const v = i.value.trim(); if (ok && v && v !== P.name) commit({ type: "page", op: "rename", page: P.id, name: v }); else renderPages(); };
+      i.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
+      i.onblur = () => done(true);
+    };
+    bar.append(b);
+  }
+  const add = el("button", { type: "button", className: "pg add", title: "Add a page: another sheet of paper in this tab", textContent: "+ Page" });
+  add.onclick = () => {
+    const page = newId(doc, "g"), layer = newId(doc, "l"), name = `Page ${state.pages.length + 1}`;
+    commit({ type: "page", op: "add", page, layer, layerName: "Layer 1", name });
+    setPage(page);
+  };
+  bar.append(add);
+  if (state.pages.length > 1) {
+    const del = el("button", { type: "button", className: "pg", title: "Delete this page and everything on it (Ctrl+Z brings it back)", textContent: "Delete page" });
+    let armed = 0;
+    del.onclick = () => {
+      if (performance.now() - armed > 2500) { armed = performance.now(); del.textContent = "Delete page?"; setTimeout(() => { del.textContent = "Delete page"; }, 2500); return; }
+      commit({ type: "page", op: "delete", page: curPage }); toast("Page deleted. Ctrl+Z brings it back.", 3000);
+    };
+    bar.append(del);
+  }
+  const clear = el("button", { type: "button", className: "pg", title: "Clear everything drawn on this page (Ctrl+Z brings it back). The words stay.", textContent: "Clear page" });
+  let armedClear = 0;
+  clear.onclick = () => {
+    const ids = pageLayers().flatMap(L => state.order[L.id]);
+    if (!ids.length) return toast("This page is already clear.", 2000);
+    if (performance.now() - armedClear > 2500) { armedClear = performance.now(); clear.textContent = "Clear page?"; setTimeout(() => { clear.textContent = "Clear page"; }, 2500); return; }
+    sel = blankSel();
+    commit({ type: "delete", ids, cleared: true }); toast("Page cleared. Ctrl+Z brings it back.", 3000);
+  };
+  bar.append(clear);
+}
+
 // ---------------------------------------------------------------- team sessions
 // The host's app (on this computer) starts a session; guests open the secure link. Everything anyone draws
 // or says goes to the host's server, which puts it in order and passes it on to everyone.
@@ -2048,7 +2134,7 @@ let team = null;   // { id, name, color, token, host, link, members, pending, cu
 function beginTeam(info) {
   info.clientNow ||= Date.now();   // when serverNow was true, so the clock is right again after a reload
   if (info.host) info.tab ||= curTab;   // the tab the session is drawn in
-  team = { ...info, members: info.members || [], pending: new Map(), cursors: new Map(), lives: new Map(), shared: new Set(Object.keys(doc.assets)), fails: 0, everOnline: false };
+  team = { ...info, members: info.members || [], pageOf: new Map(), pending: new Map(), cursors: new Map(), lives: new Map(), shared: new Set(Object.keys(doc.assets)), fails: 0, everOnline: false };
   const skew = info.serverNow - info.clientNow;
   speech.useTeamClock(() => Date.now() + skew - info.startEpoch);
   // A fresh tag on every page load, so ids never repeat even after a reload restarts the numbering.
@@ -2074,11 +2160,12 @@ function onTeamMessage(msg) {
     case "hello": {
       const lost = loadTeamState(msg.state, msg.serverNow);
       team.link.flush();
+      team.link.send({ t: "cursor", x: null, y: null, page: curPage }, false);   // so everyone knows which page you're on
       for (const ev of lost) teamSendEvent(ev);   // sent just before the connection dropped: send again (duplicates are ignored)
       break;
     }
     case "code": team.code = msg.code; try { sessionStorage.setItem(TEAM_KEY, JSON.stringify({ ...JSON.parse(sessionStorage.getItem(TEAM_KEY)), code: msg.code })); } catch (_) {} renderTeamDlg(); break;
-    case "members": team.members = msg.members; renderPeople(); renderTeamDlg(); break;
+    case "members": team.members = msg.members; renderPeople(); renderTeamDlg(); renderPages(); team.link.send({ t: "cursor", x: null, y: null, page: curPage }, false); break;   // someone joined or left: say where you are
     case "event": onTeamEvent(msg.ev, msg.assets); break;
     case "remove": {
       const i = doc.events.findIndex(e => e.id === msg.id);
@@ -2089,10 +2176,10 @@ function onTeamMessage(msg) {
     case "speechEdit": { const s = doc.speech.find(s => s.id === msg.id); if (s) { s.text = msg.text; changed(); } break; }
     case "speechDel": { const i = doc.speech.findIndex(s => s.id === msg.id); if (i >= 0) { doc.speech.splice(i, 1); changed(); } break; }
     case "meta": applyMeta(msg); break;
-    case "cursor": team.cursors.set(msg.who, { x: msg.x, y: msg.y, at: performance.now() }); requestRender(); break;
+    case "cursor": team.cursors.set(msg.who, { x: msg.x, y: msg.y, page: msg.page || "pg0", at: performance.now() }); if (team.pageOf.get(msg.who) !== (msg.page || "pg0")) { team.pageOf.set(msg.who, msg.page || "pg0"); renderPages(); renderPeople(); } requestRender(); break;
     case "live": {
       let lv = team.lives.get(msg.who);
-      if (msg.reset || !lv) lv = { props: msg.props || lv?.props, pts: [] };
+      if (msg.reset || !lv) lv = { props: msg.props || lv?.props, pts: [], page: msg.page || lv?.page || "pg0" };
       if (lv.pts.length < 20000) lv.pts.push(...(msg.pts || []).filter(q => Array.isArray(q) && q.length >= 3).slice(0, 20000 - lv.pts.length));
       team.lives.set(msg.who, lv); requestRender();
       break;
@@ -2165,12 +2252,12 @@ function applyMeta(m) {
   if ("title" in m && document.activeElement !== $("title")) { doc.title = m.title; $("title").value = m.title || ""; }
   changed(); requestRender();
 }
-const sendCursor = throttle((x, y) => { if (team) team.link.send({ t: "cursor", x, y }, false); }, 60);
+const sendCursor = throttle((x, y) => { if (team) team.link.send({ t: "cursor", x, y, page: curPage }, false); }, 60);
 const sendLive = throttle(() => {
   if (!team || !live) return;
   const L = live, from = L.sentN || 0;
   if (from >= L.pts.length && L.sentProps) return;
-  team.link.send({ t: "live", pts: L.pts.slice(from), props: L.sentProps ? undefined : L.props, reset: !L.sentProps }, false);
+  team.link.send({ t: "live", pts: L.pts.slice(from), props: L.sentProps ? undefined : L.props, reset: !L.sentProps, page: curPage }, false);
   L.sentProps = true; L.sentN = L.pts.length;
 }, 70);
 async function uploadAudio(meta, blob, tries = 3) {
@@ -2192,7 +2279,7 @@ function drawCursors(c, px) {
   const now = performance.now();
   for (const [who, cur] of team.cursors) {
     const m = memberOf(who);
-    if (!m || cur.x == null || now - cur.at > 8000) continue;
+    if (!m || cur.x == null || now - cur.at > 8000 || (cur.page || "pg0") !== curPage) continue;
     c.save(); c.translate(cur.x, cur.y); c.scale(px, px);
     c.fillStyle = m.color; c.strokeStyle = "#fff"; c.lineWidth = 1.5;
     c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 17); c.lineTo(4.5, 13); c.lineTo(8, 20); c.lineTo(10.5, 19); c.lineTo(7, 12); c.lineTo(13, 12); c.closePath(); c.fill(); c.stroke();
@@ -2208,6 +2295,8 @@ function renderPeople() {
   if (team) for (const m of team.members) {
     const chip = el("span", { className: "person" + (m.online ? "" : " off"), title: m.online ? `${m.name} is here` : `${m.name} has left or lost connection` });
     const dot = el("i"); dot.style.background = m.color; chip.append(dot, m.id === team.id ? `${m.name} (you)` : m.name);
+    const pg = m.id === team.id ? curPage : team.pageOf.get(m.id);
+    if (state.pages.length > 1 && pg) chip.append(el("small", { textContent: ` · ${state.pages.find(p => p.id === pg)?.name || ""}` }));
     box.append(chip);
   }
   if (team && !team.online) box.append(el("span", { className: "person off", textContent: "Reconnecting…" }));
@@ -2386,7 +2475,7 @@ function resumeTeam() {
 buildToolbar(); applyTheme();
 document.querySelectorAll(".tool[data-tool]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === settings.tool)));
 setMic(speech.hasSpeech ? "off" : "none");
-rebuild(); renderTimeline(); updateCursor(); checkServer(); applyRoleUI();
+rebuild(); renderTimeline(); renderPages(); updateCursor(); checkServer(); applyRoleUI();
 if (isGuestPage) { renderTabs(); renderGoals(); resumeTeam(); } else openTabs().then(() => { tabsReady = true; resumeTeam(); checkInbox(); });
 document.fonts?.ready.then(() => { redrawAll(); });
 

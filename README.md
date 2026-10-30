@@ -18,6 +18,11 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 - **Tabs, under the top bar:** each tab is its own sketch, with its own drawing, words and voice. **+ New**
   opens another; × closes one (click twice if it has anything in it). Builds that come back open as tabs
   next to the sketch they belong to (marked ↳), and a red dot means a tab changed while you were elsewhere.
+  Closing the last tab leaves a fresh blank one.
+- **Pages, along the bottom of the drawing:** a tab can hold several pages, each its own sheet of paper with its own
+  layers. **+ Page** adds one, double-click a page to rename it, **Delete page** removes it, and **Clear page** wipes
+  what's drawn on the page you're on (the words stay). Ctrl+Z brings any of them back. Everything you draw, point at
+  and say is marked with the page you were on, so the notes tell Claude which page each part belongs to.
 - **Left, everything for drawing:** the tools, the Import pictures button and your two colours (click one
   to change it, ⇄ swaps them), with **Layers** below them.
 - **Above the drawing:** the settings for the tool you're using.
@@ -88,9 +93,13 @@ Sketch and talk an idea out with up to 10 people, from anywhere.
    shared tab and see you as away; click the tab marked **Team**, or the **Team** button, to rejoin.
    To show everyone a different tab instead, open that tab and press **Team** → **Share this tab instead**. Everyone
    moves to it, and the tab you left keeps everything that was drawn and said there, everyone's voices included.
-5. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
+5. Everyone can be on a different page: two people can talk one part through on Page 1 while two others work on
+   Page 2. The page strip shows a coloured dot for whoever is on each page, and you only see someone's cursor and
+   lines as they draw when you're on the same page. When it goes to Claude, both conversations come with it, each
+   marked with its page.
+6. Undo only takes back your own changes. As host you can remove someone (**Team** → **Remove**) or end the
    session (**Team** → **End session**).
-6. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.
+7. **Send to Claude** (host only) sends the whole team session. The notes say who said and drew what.
 
 Good to know:
 
@@ -144,7 +153,8 @@ Each save makes a folder in `sessions\`, named by date and time plus the name yo
 | `transcript.md` | The layers, then every moment: what you said, what you did on the drawing while saying it, and where. Then an exact timeline |
 | `moments\01.png` ... | One picture per moment. What changed glows yellow, the rest is faded, pointing is a pink arrow or ring |
 | `storyboard.png` | The final drawing plus every moment on one page |
-| `final.png` | The finished drawing |
+| `final.png` | The finished drawing (every page side by side, when there are several) |
+| `pages.png` ... | Each page on its own, when there are several |
 | `layers\01.png` ... | Each layer on its own, bottom layer first |
 | `assets\` | The pictures you brought in, plus fills and cut-out shapes |
 | `audio\` | Your voice, one file per stretch of talking |
