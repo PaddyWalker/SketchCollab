@@ -73,6 +73,8 @@ Put them in `inbox/<id>/` with an `item.json`:
 - `round` counts builds of the same sketch: 1, then 2 after the first changes, and so on.
 - `status` is `done`, `partly` or `not yet`, and `note` says honestly what is and isn't there. Don't mark something done that wasn't checked.
 - Pictures must be inside the item's own folder. Write `item.json` last, so the app never picks up a half-written item.
+- Write `item.json` with a JSON library, or check it parses before you finish: a broken one is skipped without a word
+  (a Windows path's backslashes are the usual cause). Then check it moved to `inbox/_done/`.
 
 The app checks the inbox every few seconds while it is open, opens the build as a new tab and moves the item to `inbox/_done/`.
 
