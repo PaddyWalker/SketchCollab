@@ -1626,6 +1626,25 @@ async function closeTab(id) {
 }
 const STATUS_TEXT = { draft: "Goals to check", building: "Building", built: "Built", review: "To review", changes: "Changes sent", approved: "Approved" };
 function tabLabel(t) { return t.title || (t.kind === "review" ? `Build ${t.round || 1}` : t.kind === "sheet" ? `Turnaround ${t.round || 1}` : "Untitled sketch"); }
+// Double-click a tab to rename it: the name is the sketch's title, so it's the same as typing in the name box.
+function renameTab(t, go) {
+  if (isGuestPage) return;
+  const name = go.querySelector(".tname"), i = el("input", { className: "tren", value: t.title || "", maxLength: 40, placeholder: tabLabel(t) });
+  name.textContent = ""; name.append(i); i.focus(); i.select();
+  i.onclick = e => e.stopPropagation();
+  let done = false;
+  const finish = async ok => {
+    if (done) return; done = true;
+    const v = i.value.trim();
+    if (ok && v !== (t.title || "")) {
+      if (t.id === curTab) { doc.title = v; $("title").value = v; t.title = v; changed(); teamMeta(); }
+      else { await editTab(t, d => { d.title = v; }); delete t.fresh; saveTabs(); }   // a rename isn't news: no red dot
+    }
+    renderTabs();
+  };
+  i.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
+  i.onblur = () => finish(true);
+}
 function renderTabs() {
   const box = $("tabs"); box.hidden = isGuestPage; if (isGuestPage) return;
   box.textContent = "";
@@ -1639,6 +1658,8 @@ function renderTabs() {
     if (team?.tab === t.id || awayTeam?.tab === t.id) go.append(el("span", { className: "tstat s-team", textContent: awayTeam ? "Team, you're away" : "Team" }));
     else if (STATUS_TEXT[t.status]) go.append(el("span", { className: "tstat s-" + t.status, textContent: STATUS_TEXT[t.status] }));
     go.onclick = () => switchTab(t.id);
+    go.title += " (double-click to rename)";
+    go.ondblclick = e => { e.preventDefault(); renameTab(t, go); };
     const x = el("button", { type: "button", className: "tx", title: "Close this tab", textContent: "×" });
     let armedAt = 0;
     x.onclick = e => {

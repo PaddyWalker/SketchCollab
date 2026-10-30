@@ -18,7 +18,7 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 - **Tabs, under the top bar:** each tab is its own sketch, with its own drawing, words and voice. **+ New**
   opens another; × closes one (click twice if it has anything in it). Builds that come back open as tabs
   next to the sketch they belong to (marked ↳), and a red dot means a tab changed while you were elsewhere.
-  Closing the last tab leaves a fresh blank one.
+  Double-click a tab to rename it (Enter to keep the name, Esc to cancel). Closing the last tab leaves a fresh blank one.
 - **Pages, along the bottom of the drawing:** a tab can hold several pages, each its own sheet of paper with its own
   layers. **+ Page** adds one, double-click a page to rename it, **Delete page** removes it, and **Clear page** wipes
   what's drawn on the page you're on (the words stay). Ctrl+Z brings any of them back. Everything you draw, point at
