@@ -32,7 +32,7 @@ To stop it, close the app window and the minimised "SketchCollab (close to stop)
 
 | Tool | What it does |
 |---|---|
-| Move (V) | Click anything to select it, Shift-click to add, or drag a box. Drag to move; handles resize (Shift for a free resize). Arrow keys nudge. Bring to front, Send to back, Move to layer, Duplicate, Delete. |
+| Move (V) | Click anything to select it, Shift-click to add, or drag a box. Drag to move; handles resize (Shift keeps the shape); the round handle on top rotates (Shift snaps to 45°). Arrow keys nudge. Bring to front, Send to back, Move to layer, Duplicate, Delete. |
 | Marquee (M) | Rectangle or ellipse selection on the active layer. Anything partly inside, even part of a photo, is cut out when you move or delete it. |
 | Lasso (L) | Draw around what you want on the active layer. Works the same as Marquee. |
 | Quick select (W) | Click a drawing to grab the whole connected piece. Click a photo to select an area of similar colour (the magic wand). |

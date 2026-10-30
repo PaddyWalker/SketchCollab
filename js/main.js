@@ -534,6 +534,7 @@ const tools = {
   move: {
     down(c) {
       const sb = selectionBox(), h = sb && handleAt(sb, c.sx, c.sy);
+      if (h?.k === "r") { drag = { type: "rotate", cx: (sb.x0 + sb.x1) / 2, cy: (sb.y0 + sb.y1) / 2, a0: Math.atan2(c.y - (sb.y0 + sb.y1) / 2, c.x - (sb.x0 + sb.x1) / 2), base: pieceAngle(), t0: c.t, lifted: false }; return; }
       if (h) { drag = { type: "scale", h, sb, x0: c.x, y0: c.y, t0: c.t, lifted: false }; return; }
       if (sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 && !c.shift) { drag = { type: "move", x0: c.x, y0: c.y, sx0: c.sx, sy0: c.sy, t0: c.t, lifted: false }; return; }
       const hit = topHit(c.x, c.y);
@@ -557,6 +558,7 @@ const tools = {
         if (drag.type === "scale") drag.sb = selectionBox() || drag.sb;
       }
       if (drag.type === "move") { let dx = c.x - drag.x0, dy = c.y - drag.y0; if (c.shift) Math.abs(dx) > Math.abs(dy) ? dy = 0 : dx = 0; floating.m = translate(dx, dy); }
+      else if (drag.type === "rotate") floating.m = rotateMatrix(drag, c);
       else floating.m = scaleMatrix(drag, c);
       requestRender();
     },
@@ -712,8 +714,12 @@ function handlePoints(sb) {
     { x: sb.x0, y: my, ax: sb.x1, ay: my, k: "x" }, { x: sb.x1, y: my, ax: sb.x0, ay: my, k: "x" },
   ];
 }
+// The rotate handle sits a little above the top middle, at the same distance on screen at any zoom.
+function rotateHandle(sb) { return { x: (sb.x0 + sb.x1) / 2, y: sb.y0 - 26 / V.z, k: "r" }; }
 function handleAt(sb, sx, sy) {
   if (settings.tool !== "move") return null;
+  const r = rotateHandle(sb), [rx, ry] = toScreen(r.x, r.y);
+  if (Math.hypot(rx - sx, ry - sy) <= 9) return r;
   for (const h of handlePoints(sb)) { const [hx, hy] = toScreen(h.x, h.y); if (Math.abs(hx - sx) <= 7 && Math.abs(hy - sy) <= 7) return h; }
   return null;
 }
@@ -721,9 +727,17 @@ function scaleMatrix(d, c) {
   const h = d.h;
   let sx = h.k === "y" ? 1 : (c.x - h.ax) / ((h.x - h.ax) || 1);
   let sy = h.k === "x" ? 1 : (c.y - h.ay) / ((h.y - h.ay) || 1);
-  if (h.k === "c" && !c.shift) { const s = Math.abs(sx) > Math.abs(sy) ? sx : sy; sx = sy = s; }
+  if (h.k === "c" && c.shift) { const s = Math.abs(sx) > Math.abs(sy) ? sx : sy; sx = sy = s; }   // Shift keeps the shape
   const fix = v => Math.sign(v || 1) * Math.max(0.02, Math.abs(v));
   return scaleAbout(fix(sx), fix(sy), h.ax, h.ay);
+}
+// How far the selection is turned now (the first piece's angle), so Shift snaps to true 45° steps.
+function pieceAngle() { const p = state.pieces.get([...sel.ids][0]); return p ? Math.atan2(p.tf[1], p.tf[0]) : 0; }
+function rotateMatrix(d, c) {
+  let a = Math.atan2(c.y - d.cy, c.x - d.cx) - d.a0;
+  if (c.shift) { const step = Math.PI / 4; a = Math.round((d.base + a) / step) * step - d.base; }   // Shift: 45°, 90° and so on
+  const cos = Math.cos(a), sin = Math.sin(a);
+  return mul(translate(d.cx, d.cy), mul([cos, sin, -sin, cos, 0, 0], translate(-d.cx, -d.cy)));
 }
 
 // Marquee and lasso: whole pieces inside are selected; pieces partly inside are cut when moved or deleted.
@@ -871,6 +885,13 @@ function drawOverlay(c) {
       if (settings.tool === "move") {
         c.fillStyle = "#fff";
         for (const h of handlePoints(sb)) { c.fillRect(h.x - 4.5 * px, h.y - 4.5 * px, 9 * px, 9 * px); c.strokeRect(h.x - 4.5 * px, h.y - 4.5 * px, 9 * px, 9 * px); }
+        if (!floating || drag?.type === "rotate") {
+          const r = rotateHandle(sb0), mx = (sb.x0 + sb.x1) / 2;
+          const rx = floating ? (drag.cx + (r.x - drag.cx) * floating.m[0] + (r.y - drag.cy) * floating.m[2]) : r.x;
+          const ry = floating ? (drag.cy + (r.x - drag.cx) * floating.m[1] + (r.y - drag.cy) * floating.m[3]) : r.y;
+          if (!floating) { c.beginPath(); c.moveTo(mx, sb.y0); c.lineTo(rx, ry); c.stroke(); }
+          c.beginPath(); c.arc(rx, ry, 5.5 * px, 0, Math.PI * 2); c.fill(); c.stroke();
+        }
       }
       c.restore();
     }
@@ -961,7 +982,7 @@ view.addEventListener("pointermove", e => {
   }
   if (!gesture && !e.buttons) hoverPoint(c);
   if (team) sendCursor(c.x, c.y);
-  if (settings.tool === "move") { const sb = selectionBox(); const h = sb && handleAt(sb, c.sx, c.sy); view.style.cursor = h ? (h.k === "x" ? "ew-resize" : h.k === "y" ? "ns-resize" : "nwse-resize") : sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 ? "move" : "default"; }
+  if (settings.tool === "move") { const sb = selectionBox(); const h = sb && handleAt(sb, c.sx, c.sy); view.style.cursor = h ? (h.k === "r" ? "grab" : h.k === "x" ? "ew-resize" : h.k === "y" ? "ns-resize" : "nwse-resize") : sb && c.x >= sb.x0 && c.x <= sb.x1 && c.y >= sb.y0 && c.y <= sb.y1 ? "move" : "default"; }
   if (settings.tool === "brush" || settings.tool === "eraser") requestRender();
 });
 function endPointer(e, cancel) {
@@ -1187,8 +1208,8 @@ function renderOptions() {
       s.onchange = () => { if (!s.value) return; ensureCut(); commit({ type: "setLayer", ids: [...sel.ids], layer: s.value }); setActiveLayer(s.value); renderOptions(); };
       o.append(optLabel("", s));
       o.append(btn("Duplicate", () => { copySelection(); pastePieces(); }), btn("Delete", deleteSelection), btn("Deselect", clearSelection));
-      o.append(hint("Drag to move. Corner handles resize (Shift for free resize). Arrow keys nudge."));
-    } else o.append(hint("Click anything to select it, Shift-click to add, or drag a box around things. Then drag to move or use the handles to resize."));
+      o.append(hint("Drag to move. Handles resize (Shift keeps the shape). The round handle on top rotates (Shift snaps to 45°). Arrow keys nudge."));
+    } else o.append(hint("Click anything to select it, Shift-click to add, or drag a box around things. Then drag to move, use the handles to resize, or the round handle to rotate."));
   } else if (t === "marquee") {
     o.append(seg([["rect", "Rectangle"], ["ellipse", "Ellipse"]], settings.marquee, v => { settings.marquee = v; }), hint("Drag over the active layer. Shift adds to the selection. Parts of photos or drawings inside are cut out when you move or delete them."));
   } else if (t === "lasso") {

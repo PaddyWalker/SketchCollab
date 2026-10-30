@@ -101,6 +101,7 @@ function describeAll(m, doc, before, after) {
       const from = was.length ? where(was.reduce((b, p) => unionBox(b, docBox(p)), null), W, H) : "";
       const to = where(ps.reduce((b, p) => unionBox(b, docBox(p)), null), W, H);
       if (isTranslate(e.m)) out.push(from && from !== to ? `Moved ${n} from ${from.replace(/^(at|on|in) the /, "the ")} to ${to.replace(/^(at|on|in) the /, "the ")}.` : `Moved ${n}, ${to}.`);
+      else if (Math.abs(e.m[1]) > 1e-6) out.push(`Turned ${n} ${Math.round(Math.abs(Math.atan2(e.m[1], e.m[0]) * 180 / Math.PI))}° ${e.m[1] > 0 ? "clockwise" : "anticlockwise"}, ${to}.`);
       else out.push(`${scaleOf(e.m) >= 1 ? "Enlarged" : "Shrank"} ${n}, ${to}.`);
     }
     else if (e.type === "delete") out.push(`Deleted ${e.ids.length === 1 ? "a piece" : e.ids.length + " pieces"}.`);
