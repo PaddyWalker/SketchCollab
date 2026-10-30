@@ -1438,7 +1438,7 @@ $("playStop").onclick = stopPlayback;
 const recBtn = $("rec"), micPill = $("mic");
 let tickTimer = null;
 function setMic(s) {
-  const map = { off: ["Mic off", ""], on: ["Listening", "live"], blocked: ["Mic blocked", "warn"], none: ["No speech-to-text here", "warn"], error: ["Speech-to-text stopped", "warn"] };
+  const map = { off: ["Mic off", ""], on: ["Listening", "live"], blocked: ["Mic blocked", "warn"], none: ["No speech-to-text here", "warn"], error: ["Words not coming through: restarting", "warn"] };
   const [label, cls] = map[s]; micPill.textContent = label; micPill.className = "pill " + cls;
 }
 function startRec() {
@@ -1449,6 +1449,7 @@ function startRec() {
     onInterim: t => { $("interim").textContent = t ? t + " …" : ""; },
     onMic: setMic,
     onToast: toast,
+    onLog: entry => { if (doc !== target) return; (doc.sttLog ||= []).push(team ? { ...entry, by: team.name } : entry); if (doc.sttLog.length > 500) doc.sttLog.shift(); },
     onAudio: ({ t0, dur, blob }) => {
       if (doc !== target) return;
       const id = newId(doc, "a"), meta = { id, t0, dur, type: blob.type, ...(team ? { who: team.id, by: team.name } : {}) };

@@ -210,6 +210,12 @@ export function wordsText(doc, state, moments, lengthMs, files) {
     L.push(`**On the drawing:** ${describe(m, doc, before, after)}`, "");
     if (files) L.push(`![Moment ${i + 1}](moments/${String(i + 1).padStart(2, "0")}.png)`, "");
   });
+  const trouble = (doc.sttLog || []).filter(x => x.e !== "error" || x.detail !== "aborted");
+  if (trouble.length) {   // so whoever reads this knows words may be missing, and from when
+    L.push("## Speech-to-text trouble", "", "Speech-to-text stopped or stalled during this session, so some words may be missing here. Everyone's voice is still in audio/.", "");
+    trouble.slice(0, 40).forEach(x => L.push(`- \`${fmt(x.t)}\` ${x.by ? x.by + ": " : ""}${x.e}${x.detail ? ` (${x.detail})` : ""}`));
+    L.push("");
+  }
   L.push("## Timeline", "", "Exact order of words and drawing. Speech times are when the words were picked up, often a second after they started.", "");
   const lines = [];
   doc.speech.forEach(s => lines.push({ t: s.t0, line: `${s.by ? s.by + " " : ""}${s.src === "typed" ? "typed" : "said"} “${s.text}”` }));

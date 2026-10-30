@@ -19,6 +19,10 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 export const hasSpeech = !!SR;
 
 let cb = {}, rec = null, starts = {}, micBlocked = false, failTimes = [];
+// Speech-to-text is Chrome's, and it can stop or stall on its own. It's kept going until Stop is pressed: restarted
+// after every end, retried after failures (never given up on), and restarted if it goes quiet while the mic hears
+// someone. What happened is noted (cb.onLog), so a session shows why any words are missing.
+let lastHeard = 0, lastWords = 0, restarts = 0, watchdog = null, level = null;
 let gen = 0, audio = null;   // gen: which Start press the audio belongs to
 
 export function start(callbacks) {
@@ -26,13 +30,35 @@ export function start(callbacks) {
   talking = true;
   if (!teamNow) { if (base > 0) base += PAUSE; since = performance.now(); }
   gen++;
+  lastWords = lastHeard = Date.now();
   startSpeech(); startAudio(gen);
+  clearInterval(watchdog);
+  watchdog = setInterval(checkSpeech, 5000);
+}
+const log = (e, detail = "") => cb.onLog?.({ t: now(), e, ...(detail ? { detail } : {}) });
+// Someone has been talking for a while and no words have come back: speech-to-text has stalled, so restart it.
+function checkSpeech() {
+  if (!isRunning() || micBlocked) return;
+  const quietFor = Date.now() - lastWords;
+  if (quietFor > 25000 && Date.now() - lastHeard < 8000) {
+    log("stalled", `no words for ${Math.round(quietFor / 1000)}s while the mic heard talking`);
+    lastWords = Date.now();
+    cb.onMic?.("error");
+    restartSpeech();
+  }
+}
+function restartSpeech() {
+  const old = rec; rec = null;
+  if (old) { old.onend = null; old.onerror = null; old.onresult = null; try { old.abort(); } catch (_) {} }
+  restarts++;
+  setTimeout(() => { if (isRunning() && !rec) startSpeech(); }, 300);
 }
 // Resolves once the last audio has been handed over, so nothing arrives late.
 export function stop() {
   const end = now();
   talking = false;
   if (!teamNow) { base = end + PAUSE; since = null; }
+  clearInterval(watchdog); watchdog = null;
   if (rec) { const r = rec; rec = null; r.onend = () => { cb.onInterim?.(""); if (!micBlocked) cb.onMic?.("off"); }; try { r.stop(); } catch (_) {} }
   cb.onInterim?.("");
   return stopAudio(end);
@@ -45,7 +71,7 @@ function startSpeech() {
   r.lang = navigator.language || "en-US"; r.continuous = true; r.interimResults = true;
   r.onstart = () => { starts = {}; cb.onMic?.("on"); };
   r.onresult = e => {
-    failTimes = [];
+    failTimes = []; lastWords = Date.now();
     const interim = [];
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const res = e.results[i], txt = res[0].transcript.trim();
@@ -56,6 +82,7 @@ function startSpeech() {
     cb.onInterim?.(interim.join(" "));
   };
   r.onerror = e => {
+    if (e.error !== "no-speech") log("error", e.error);
     if (e.error === "not-allowed" || e.error === "service-not-allowed") { micBlocked = true; cb.onMic?.("blocked"); cb.onToast?.("The microphone is blocked for this page. Click the mic icon in the address bar, allow it, then reload.", 8000); }
     else if (e.error === "audio-capture") { cb.onMic?.("error"); cb.onToast?.("No microphone was found. Check one is plugged in and turned on in Windows sound settings.", 8000); }
     else if (e.error === "network") { failTimes.push(Date.now()); cb.onToast?.("Speech-to-text needs an internet connection. Retrying…"); }
@@ -63,10 +90,17 @@ function startSpeech() {
   r.onend = () => {
     cb.onInterim?.("");
     failTimes = failTimes.filter(t => Date.now() - t < 15000);
-    if (rec === r && isRunning() && !micBlocked && failTimes.length < 4) setTimeout(() => { if (rec === r && isRunning()) try { r.start(); } catch (_) {} }, 250);   // Chrome stops after a silence
-    else if (rec === r && isRunning() && failTimes.length >= 4) { cb.onMic?.("error"); cb.onToast?.("Speech-to-text keeps failing, so the timer runs without it. Type notes, or stop and start again.", 9000); }
+    if (rec !== r || !isRunning() || micBlocked) return;
+    // Chrome stops after a silence, or when something goes wrong: start again. After several failures in a row,
+    // wait a little longer, but keep trying until Stop is pressed.
+    const wait = failTimes.length >= 4 ? 10000 : 250;
+    if (failTimes.length >= 4) { cb.onMic?.("error"); log("failing", "retrying in 10s"); }
+    setTimeout(() => {
+      if (rec !== r || !isRunning()) return;
+      try { r.start(); } catch (err) { log("restart failed", String(err?.name || err)); restartSpeech(); }   // a fresh one instead
+    }, wait);
   };
-  try { r.start(); } catch (_) {}
+  try { r.start(); } catch (err) { log("start failed", String(err?.name || err)); setTimeout(() => { if (rec === r && isRunning()) restartSpeech(); }, 1000); }
 }
 
 async function startAudio(myGen) {
@@ -82,6 +116,17 @@ async function startAudio(myGen) {
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   audio = { recorder, stream, chunks, t0: now(), onDone: cb.onAudio };
   recorder.start(1000);
+  try {   // how loud the mic is, a few times a second: talking counts as heard
+    const ac = new AudioContext(), an = ac.createAnalyser(), buf = new Uint8Array(512);
+    an.fftSize = 512; ac.createMediaStreamSource(stream).connect(an);
+    const a = audio;
+    level = setInterval(() => {
+      if (audio !== a) { clearInterval(level); ac.close(); return; }
+      an.getByteTimeDomainData(buf);
+      let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      if (peak > 18) lastHeard = Date.now();
+    }, 250);
+  } catch (_) {}
 }
 function stopAudio(end) {
   const a = audio; audio = null;
